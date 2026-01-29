@@ -1086,10 +1086,10 @@
 
         return (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-screen overflow-y-auto">
               <div className="flex justify-between items-center border-b pb-3">
                 <h3 className="text-xl font-semibold">{title}</h3>
-                <button onClick={onClose} className="text-black close-modal">&times;</button>
+                <button onClick={onClose} className="text-black close-modal text-2xl">&times;</button>
               </div>
               <div className="mt-4">{children}</div>
             </div>
@@ -1368,16 +1368,152 @@
         </div>
       );
 
-      const BookingsPage = () => (
-         <div className="bg-white p-8 rounded-lg shadow">
-            <h2 className="text-3xl font-bold text-gray-800 mb-4">Booking Management</h2>
-            <div className="prose max-w-none">
-                <p>Currently, the booking process is finalized when a customer downloads the generated PDF and sends it to the admin's WhatsApp number.</p>
-                <p>This section is a placeholder for future development where bookings could be stored and managed directly within this admin panel after integrating a backend database.</p>
-                <p>For now, please continue to monitor WhatsApp for new booking slips.</p>
+      const BookingsPage = () => {
+         const [bookings, setBookings] = useState([]);
+         const [loading, setLoading] = useState(true);
+         const [viewBooking, setViewBooking] = useState(null);
+
+         useEffect(() => {
+             fetchBookings();
+         }, []);
+
+         const fetchBookings = async () => {
+             setLoading(true);
+             const { data, error } = await supabaseClient.from('bookings').select('*').order('created_at', { ascending: false });
+             if (error) {
+                 console.error('Error fetching bookings:', error);
+                 alert('Failed to load bookings');
+             } else {
+                 setBookings(data);
+             }
+             setLoading(false);
+         };
+
+         const handleStatusUpdate = async (id, newStatus) => {
+             const { error } = await supabaseClient.from('bookings').update({ status: newStatus }).eq('id', id);
+             if (error) {
+                 alert('Failed to update status');
+             } else {
+                 setBookings(prev => prev.map(b => b.id === id ? { ...b, status: newStatus } : b));
+             }
+         };
+
+         if (loading) return <div className="p-8 text-center text-gray-500">Loading bookings...</div>;
+
+         return (
+            <div className="bg-white p-8 rounded-lg shadow">
+               <div className="flex justify-between items-center mb-6">
+                   <h2 className="text-3xl font-bold text-gray-800">Booking Management</h2>
+                   <button onClick={fetchBookings} className="text-sm text-emerald-600 hover:text-emerald-800 font-medium">Refresh</button>
+               </div>
+               <div className="overflow-x-auto">
+                   <table className="w-full text-sm text-left text-gray-500">
+                       <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                           <tr>
+                               <th className="px-6 py-3">ID</th>
+                               <th className="px-6 py-3">Customer</th>
+                               <th className="px-6 py-3">Event Date</th>
+                               <th className="px-6 py-3">Total (RM)</th>
+                               <th className="px-6 py-3">Status</th>
+                               <th className="px-6 py-3">Actions</th>
+                           </tr>
+                       </thead>
+                       <tbody>
+                           {bookings.length === 0 ? (
+                               <tr><td colSpan="6" className="px-6 py-4 text-center">No bookings found.</td></tr>
+                           ) : (
+                               bookings.map(booking => (
+                                   <tr key={booking.id} className="bg-white border-b hover:bg-gray-50">
+                                       <td className="px-6 py-4 font-medium text-gray-900">#{booking.id}</td>
+                                       <td className="px-6 py-4">
+                                           <div className="font-medium text-gray-800">{booking.full_name}</div>
+                                           <div className="text-xs text-gray-500">{booking.phone}</div>
+                                       </td>
+                                       <td className="px-6 py-4">{booking.event_date}</td>
+                                       <td className="px-6 py-4 font-bold">RM {booking.total_price}</td>
+                                       <td className="px-6 py-4">
+                                           <select 
+                                               value={booking.status} 
+                                               onChange={(e) => handleStatusUpdate(booking.id, e.target.value)}
+                                               className={`text-xs font-semibold px-2 py-1 rounded-full border-0 cursor-pointer ${
+                                                   booking.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' : 
+                                                   booking.status === 'Confirmed' ? 'bg-blue-100 text-blue-800' :
+                                                   booking.status === 'Completed' ? 'bg-green-100 text-green-800' : 
+                                                   'bg-red-100 text-red-800'
+                                               }`}
+                                           >
+                                               <option value="Pending">Pending</option>
+                                               <option value="Confirmed">Confirmed</option>
+                                               <option value="Completed">Completed</option>
+                                               <option value="Cancelled">Cancelled</option>
+                                           </select>
+                                       </td>
+                                       <td className="px-6 py-4">
+                                           <button onClick={() => setViewBooking(booking)} className="font-medium text-emerald-600 hover:underline">View Details</button>
+                                       </td>
+                                   </tr>
+                               ))
+                           )}
+                       </tbody>
+                   </table>
+               </div>
+
+               <AdminModal isOpen={!!viewBooking} onClose={() => setViewBooking(null)} title={`Booking #${viewBooking?.id} Details`}>
+                   {viewBooking && (
+                       <div className="space-y-4">
+                           <div className="grid grid-cols-2 gap-4 text-sm">
+                               <div><span className="font-bold">Name:</span> {viewBooking.full_name}</div>
+                               <div><span className="font-bold">Email:</span> {viewBooking.email}</div>
+                               <div><span className="font-bold">Phone:</span> {viewBooking.phone}</div>
+                               <div><span className="font-bold">Location:</span> {viewBooking.location}</div>
+                               <div><span className="font-bold">Event Date:</span> {viewBooking.event_date}</div>
+                               <div><span className="font-bold">Time:</span> {viewBooking.event_time}</div>
+                               <div><span className="font-bold">Guests:</span> {viewBooking.guest_count}</div>
+                               <div><span className="font-bold">Mode:</span> {viewBooking.booking_mode}</div>
+                           </div>
+                           
+                           {viewBooking.special_requests && (
+                               <div className="bg-yellow-50 p-3 rounded-md text-sm border border-yellow-200">
+                                   <span className="font-bold text-yellow-800">Special Requests:</span>
+                                   <p className="mt-1 text-gray-700">{viewBooking.special_requests}</p>
+                               </div>
+                           )}
+
+                           <div className="border-t pt-4">
+                               <h4 className="font-bold text-gray-800 mb-2">Ordered Items</h4>
+                               <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2 max-h-60 overflow-y-auto">
+                                   {(() => {
+                                       const items = viewBooking.selected_items;
+                                       if (!items) return <p>No items found.</p>;
+                                       const els = [];
+                                       if (items.canopies) {
+                                            Object.entries(items.canopies).forEach(([key, qty]) => {
+                                                if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Canopy ({key})</span><span>x{qty}</span></div>);
+                                            });
+                                       }
+                                       if (items.package) {
+                                           els.push(<div key="pkg" className="font-semibold text-emerald-700">Package: {items.package.name}</div>);
+                                       }
+                                       if (items.accessories) {
+                                           Object.entries(items.accessories).forEach(([key, qty]) => {
+                                                if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Accessory ID #{key}</span><span>x{qty}</span></div>);
+                                           });
+                                       }
+                                       return els;
+                                   })()}
+                               </div>
+                           </div>
+
+                           <div className="flex justify-between items-center pt-4 border-t font-bold text-lg">
+                               <span>Total Price:</span>
+                               <span>RM {viewBooking.total_price}</span>
+                           </div>
+                       </div>
+                   )}
+               </AdminModal>
             </div>
-         </div>
-      );
+         );
+      };
       // --- END: admin/AdminDashboard.tsx ---
 
       // --- START: App.tsx ---
@@ -1704,16 +1840,51 @@
           }, [selectedCanopies, selectedPackage, selectedAccessories, bookingMode, canopiesData, accessoriesData]);
 
 
-          const handleCompleteBooking = () => {
+          const handleCompleteBooking = async () => {
               const hasCanopySelection = Object.values(selectedCanopies).some(q => q > 0);
               if (!hasCanopySelection) {
                   alert("Please make a selection before completing the booking.");
                   return;
               }
 
+              // --- 1. Save to Supabase ---
+              const { subtotal, sst, deliveryFee, grandTotal, deposit } = financials;
+              
+              const bookingPayload = {
+                  full_name: bookingDetails.fullName,
+                  email: bookingDetails.email,
+                  phone: bookingDetails.phone,
+                  event_date: bookingDetails.eventDate,
+                  event_time: bookingDetails.eventTime,
+                  location: bookingDetails.location,
+                  guest_count: bookingDetails.guestCount,
+                  special_requests: bookingDetails.specialRequests,
+                  booking_mode: bookingMode,
+                  selected_items: {
+                      canopies: selectedCanopies,
+                      package: selectedPackage,
+                      accessories: selectedAccessories,
+                      color: selectedColor
+                  },
+                  total_price: grandTotal,
+                  deposit_amount: deposit,
+                  status: 'Pending'
+              };
+
+              try {
+                  const { error } = await supabaseClient.from('bookings').insert(bookingPayload);
+                  if (error) {
+                      console.error("Supabase Insert Error:", error);
+                      alert("Note: Failed to save booking to database. Proceeding to WhatsApp generation.");
+                  }
+              } catch (err) {
+                  console.error("Booking Error:", err);
+              }
+
+
+              // --- 2. Generate PDF ---
               const { jsPDF } = window.jspdf;
               const doc = new jsPDF();
-              const { subtotal, sst, deliveryFee, grandTotal, deposit } = financials;
               
               doc.setFontSize(22);
               doc.setFont('helvetica', 'bold');
@@ -1812,7 +1983,7 @@
               doc.text('Thank you for booking with BMC Canopy!', 105, finalY + 10, { align: 'center' });
               doc.save('BMC_Canopy_Booking_Slip.pdf');
 
-              // --- New WhatsApp Integration Logic ---
+              // --- 3. WhatsApp Redirect ---
               let summaryText = `Hello BMC Canopy, I would like to confirm my booking.\n\n`;
               summaryText += `*BOOKING SUMMARY*\n`;
               summaryText += `-----------------------------------\n`;
@@ -1861,7 +2032,7 @@
 
               window.open(whatsappUrl, '_blank');
               
-              alert('Booking slip downloaded! You are being redirected to WhatsApp. Please attach the downloaded PDF to the message to complete your booking.');
+              alert('Booking saved and slip downloaded! You are being redirected to WhatsApp to confirm your order.');
 
               navigateToHome();
           };
