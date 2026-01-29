@@ -13,6 +13,19 @@
       body {
         font-family: 'Inter', sans-serif;
       }
+      /* Add some basic styling for the drag handle */
+      .drag-handle {
+        cursor: grab;
+        color: #9ca3af;
+      }
+      .drag-handle:active {
+        cursor: grabbing;
+        color: #059669;
+      }
+      tr.dragging {
+        opacity: 0.5;
+        background-color: #f0fdf4;
+      }
     </style>
   </head>
   <body class="bg-gray-50">
@@ -33,7 +46,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
     <script type="text/babel">
-      const { useState, useMemo, useCallback, useEffect } = React;
+      const { useState, useMemo, useCallback, useEffect, useRef } = React;
 
       // --- START: Supabase Client Setup ---
       const { createClient } = supabase;
@@ -1086,9 +1099,54 @@
       // --- END: admin/AdminModal.tsx ---
 
       // --- START: admin/ContentManager.tsx ---
-      const ContentManager = ({ title, items, fields, onSave, onDelete }) => {
+      const ContentManager = ({ title, items, fields, onSave, onDelete, onReorderSave }) => {
         const [isModalOpen, setIsModalOpen] = useState(false);
         const [currentItem, setCurrentItem] = useState(null);
+        
+        // Drag and Drop state
+        const [localItems, setLocalItems] = useState(items);
+        const dragItem = useRef(null);
+        const dragOverItem = useRef(null);
+        const [isOrderChanged, setIsOrderChanged] = useState(false);
+
+        // Sync local items when props change (e.g. after fetch or save)
+        useEffect(() => {
+            setLocalItems(items);
+            setIsOrderChanged(false);
+        }, [items]);
+
+        const handleDragStart = (e, position) => {
+            dragItem.current = position;
+            // Add a class for styling purposes if needed
+            e.target.closest('tr').classList.add('dragging');
+        };
+
+        const handleDragEnter = (e, position) => {
+            dragOverItem.current = position;
+            
+            // Optional: Reorder locally for visual feedback immediately
+            const copyListItems = [...localItems];
+            const dragItemContent = copyListItems[dragItem.current];
+            copyListItems.splice(dragItem.current, 1);
+            copyListItems.splice(dragOverItem.current, 0, dragItemContent);
+            
+            dragItem.current = position; // Update drag index to current position
+            setLocalItems(copyListItems);
+            setIsOrderChanged(true);
+        };
+
+        const handleDragEnd = (e) => {
+            e.target.closest('tr').classList.remove('dragging');
+            dragItem.current = null;
+            dragOverItem.current = null;
+        };
+
+        const handleSaveOrder = () => {
+            if (onReorderSave) {
+                onReorderSave(localItems);
+                setIsOrderChanged(false);
+            }
+        };
 
         const openModal = (item = null) => {
           const initialState = fields.reduce((acc, field) => {
@@ -1153,21 +1211,47 @@
           <div className="bg-white p-6 rounded-lg shadow">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-2xl font-bold text-gray-800">{title}</h2>
-              <button onClick={() => openModal()} className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
-                Add New
-              </button>
+              <div className="flex space-x-2">
+                 {isOrderChanged && (
+                    <button onClick={handleSaveOrder} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Save Order
+                    </button>
+                 )}
+                  <button onClick={() => openModal()} className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
+                    Add New
+                  </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left text-gray-500">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                   <tr>
+                    <th scope="col" className="px-4 py-3 w-10"></th>
                     {fields.map(f => !f.hidden && <th key={f.name} scope="col" className="px-6 py-3">{f.label}</th>)}
                     <th scope="col" className="px-6 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map(item => (
-                    <tr key={item.id} className="bg-white border-b hover:bg-gray-50">
+                  {localItems.map((item, index) => (
+                    <tr 
+                        key={item.id} 
+                        className="bg-white border-b hover:bg-gray-50 transition-colors"
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragEnter={(e) => handleDragEnter(e, index)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => e.preventDefault()}
+                    >
+                        <td className="px-4 py-4">
+                            <div className="drag-handle" title="Drag to reorder">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                        </td>
                         {fields.map(f => !f.hidden && (
                             <td key={`${item.id}-${f.name}`} className="px-6 py-4">
                                 {f.name === 'image_url' && item[f.name] ? (
@@ -1328,10 +1412,11 @@
                   setIsLoading(true);
                   setError(null);
                   try {
+                      // Attempt to sort by sort_order
                       const [canopiesRes, packagesRes, accessoriesRes] = await Promise.all([
-                          supabaseClient.from('canopies').select('*'),
-                          supabaseClient.from('packages').select('*'),
-                          supabaseClient.from('accessories').select('*')
+                          supabaseClient.from('canopies').select('*').order('sort_order', { ascending: true }),
+                          supabaseClient.from('packages').select('*').order('sort_order', { ascending: true }),
+                          supabaseClient.from('accessories').select('*').order('sort_order', { ascending: true })
                       ]);
 
                       if (canopiesRes.error) throw canopiesRes.error;
@@ -1343,7 +1428,24 @@
                       setAccessoriesData(accessoriesRes.data || []);
                   } catch (err) {
                       console.error("Error fetching data from Supabase:", err);
-                      setError(`Failed to load data: ${err.message}. Please ensure your Supabase tables (canopies, packages, accessories) are set up correctly and reload the page.`);
+                      // Fallback logic in case sort_order column doesn't exist yet, to prevent app crash
+                      if (err.message.includes('sort_order')) {
+                        console.warn("Attempting fallback fetch without sort_order.");
+                         try {
+                              const [canopiesRes, packagesRes, accessoriesRes] = await Promise.all([
+                                  supabaseClient.from('canopies').select('*'),
+                                  supabaseClient.from('packages').select('*'),
+                                  supabaseClient.from('accessories').select('*')
+                              ]);
+                              setCanopiesData(canopiesRes.data || []);
+                              setPackagesData(packagesRes.data || []);
+                              setAccessoriesData(accessoriesRes.data || []);
+                         } catch (fallbackErr) {
+                              setError(`Failed to load data: ${fallbackErr.message}.`);
+                         }
+                      } else {
+                          setError(`Failed to load data: ${err.message}. Please ensure your Supabase tables (canopies, packages, accessories) are set up correctly and reload the page.`);
+                      }
                   } finally {
                       setIsLoading(false);
                   }
@@ -1411,6 +1513,29 @@
             const { error } = await supabaseClient.from('accessories').delete().eq('id', id);
             if (error) { alert(`Error deleting accessory: ${error.message}`); }
             else { setAccessoriesData(prev => prev.filter(a => a.id !== id)); }
+          };
+          
+          // --- Reorder Handler ---
+          const handleReorder = async (tableName, newItems, setLocalState) => {
+              // Optimistic UI update
+              setLocalState(newItems);
+
+              // Update: We must send the FULL object to upsert to avoid overwriting other columns with null/defaults
+              // if the backend treats it as a full row replacement.
+              const updates = newItems.map((item, index) => ({
+                  ...item, // Spread existing properties (name, price, etc.)
+                  sort_order: index
+              }));
+
+              try {
+                  // select() is good practice to get the returned data back
+                  const { error } = await supabaseClient.from(tableName).upsert(updates); 
+                  if (error) throw error;
+              } catch (err) {
+                  console.error(`Error saving order for ${tableName}:`, err);
+                  alert(`Failed to save new order. Please ensure the 'sort_order' column exists in your database table '${tableName}'.`);
+                  // In a real app, we might revert local state here
+              }
           };
 
 
@@ -1907,6 +2032,7 @@
                                     ]}
                                     onSave={handleSaveCanopy}
                                     onDelete={handleDeleteCanopy}
+                                    onReorderSave={(newItems) => handleReorder('canopies', newItems, setCanopiesData)}
                                   />;
                       case 'packages':
                           return <ContentManager
@@ -1920,6 +2046,7 @@
                                     ]}
                                     onSave={handleSavePackage}
                                     onDelete={handleDeletePackage}
+                                    onReorderSave={(newItems) => handleReorder('packages', newItems, setPackagesData)}
                                   />;
                       case 'accessories':
                           return <ContentManager
@@ -1933,6 +2060,7 @@
                                     ]}
                                     onSave={handleSaveAccessory}
                                     onDelete={handleDeleteAccessory}
+                                    onReorderSave={(newItems) => handleReorder('accessories', newItems, setAccessoriesData)}
                                   />;
                       case 'bookings':
                           return <BookingsPage />;
