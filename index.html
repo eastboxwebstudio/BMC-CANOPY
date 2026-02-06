@@ -41,10 +41,6 @@
     <!-- Supabase Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-    <!-- PDF Generation Libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-
     <script type="text/babel">
       const { useState, useMemo, useCallback, useEffect, useRef } = React;
 
@@ -1485,15 +1481,20 @@
                                    {(() => {
                                        const items = viewBooking.selected_items;
                                        if (!items) return <p>No items found.</p>;
+                                       
                                        const els = [];
+                                       
+                                       // Canopies
                                        if (items.canopies) {
                                             Object.entries(items.canopies).forEach(([key, qty]) => {
                                                 if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Canopy ({key})</span><span>x{qty}</span></div>);
                                             });
                                        }
+                                       // Package
                                        if (items.package) {
                                            els.push(<div key="pkg" className="font-semibold text-emerald-700">Package: {items.package.name}</div>);
                                        }
+                                       // Accessories
                                        if (items.accessories) {
                                            Object.entries(items.accessories).forEach(([key, qty]) => {
                                                 if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Accessory ID #{key}</span><span>x{qty}</span></div>);
@@ -1847,7 +1848,7 @@
                   return;
               }
 
-              // --- 1. Save to Supabase ---
+              // --- 1. Save to Supabase and Get ID ---
               const { subtotal, sst, deliveryFee, grandTotal, deposit } = financials;
               
               const bookingPayload = {
@@ -1871,126 +1872,35 @@
                   status: 'Pending'
               };
 
+              let bookingId = 'PENDING';
+
               try {
-                  const { error } = await supabaseClient.from('bookings').insert(bookingPayload);
+                  const { data, error } = await supabaseClient
+                    .from('bookings')
+                    .insert(bookingPayload)
+                    .select()
+                    .single();
+                  
                   if (error) {
                       console.error("Supabase Insert Error:", error);
-                      alert("Note: Failed to save booking to database. Proceeding to WhatsApp generation.");
+                      alert("Note: Could not save to database, but proceeding to WhatsApp.");
+                  } else if (data) {
+                      bookingId = data.id;
                   }
               } catch (err) {
                   console.error("Booking Error:", err);
               }
 
-
-              // --- 2. Generate PDF ---
-              const { jsPDF } = window.jspdf;
-              const doc = new jsPDF();
+              // --- 2. Construct WhatsApp Message ---
+              let summaryText = `Salam BMC Canopy, saya nak buat tempahan (Booking #${bookingId}).\n\n`;
+              summaryText += `*MAKLUMAT PELANGGAN*\n`;
+              summaryText += `Nama: ${bookingDetails.fullName || 'N/A'}\n`;
+              summaryText += `Tarikh: ${bookingDetails.eventDate || 'N/A'}\n`;
+              summaryText += `Masa: ${bookingDetails.eventTime || 'N/A'}\n`;
+              summaryText += `Lokasi: ${bookingDetails.location || 'N/A'}\n`;
+              summaryText += `No Tel: ${bookingDetails.phone || 'N/A'}\n\n`;
               
-              doc.setFontSize(22);
-              doc.setFont('helvetica', 'bold');
-              doc.text('BMC Canopy', 105, 20, { align: 'center' });
-              
-              doc.setFontSize(16);
-              doc.setFont('helvetica', 'normal');
-              doc.text('Booking Confirmation', 105, 30, { align: 'center' });
-              
-              doc.setFontSize(12);
-              doc.text('Customer Information:', 14, 50);
-              doc.setFontSize(10);
-              doc.text(`Full Name: ${bookingDetails.fullName || 'N/A'}`, 14, 58);
-              doc.text(`Email: ${bookingDetails.email || 'N/A'}`, 14, 64);
-              doc.text(`Phone: ${bookingDetails.phone || 'N/A'}`, 14, 70);
-              
-              doc.setFontSize(12);
-              doc.text('Event Details:', 105, 50);
-              doc.setFontSize(10);
-              doc.text(`Date: ${bookingDetails.eventDate || 'N/A'}`, 105, 58);
-              doc.text(`Time: ${bookingDetails.eventTime || 'N/A'}`, 105, 64);
-              doc.text(`Location: ${bookingDetails.location || 'N/A'}`, 105, 70);
-              doc.text(`Guests: ${bookingDetails.guestCount || 'N/A'}`, 105, 76);
-
-              const tableColumn = ["Item Description", "Details", "Price (RM)"];
-              const tableRows = [];
-              
-              if (bookingMode === BookingMode.AlaCarte) {
-                Object.entries(selectedCanopies).forEach(([compositeId, quantity]) => {
-                    if (quantity > 0) {
-                        const idParts = compositeId.split('_');
-                        const canopyId = idParts[0];
-                        const sizeName = idParts.length > 1 ? idParts[1] : null;
-                        const canopy = canopiesData.find(c => c.id == canopyId);
-                        if (!canopy) return;
-                        let price;
-                        let name = canopy.name;
-                        if (sizeName && canopy.sizes) {
-                            const size = canopy.sizes.find(s => s.name === sizeName);
-                            price = size ? size.price : 0;
-                            name = `${canopy.name} (${sizeName})`;
-                        } else {
-                            price = canopy.price;
-                        }
-                        tableRows.push([`${name} x${quantity}`, `Color: ${selectedColor?.name || 'N/A'}`, (price * quantity).toFixed(2)]);
-                    }
-                });
-              }
-
-              if (bookingMode === BookingMode.Package && selectedPackage) {
-                  tableRows.push([selectedPackage.name, { content: `Color: ${selectedColor?.name || 'N/A'}\n` + selectedPackage.items.join(', '), styles: { cellWidth: 'wrap'} }, selectedPackage.price.toFixed(2)]);
-              }
-              const accessoryEntries = Object.entries(selectedAccessories).filter(([, qty]) => qty > 0);
-              if (accessoryEntries.length > 0) {
-                  tableRows.push([{ content: 'Accessories / Add-ons', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [230, 230, 230] } }]);
-                  accessoryEntries.forEach(([id, quantity]) => {
-                      const accessory = accessoriesData.find(a => a.id == id);
-                      if (accessory) {
-                          tableRows.push([`${accessory.name} x${quantity}`, '', (accessory.price * Number(quantity)).toFixed(2)]);
-                      }
-                  });
-              }
-              
-              doc.autoTable({ head: [tableColumn], body: tableRows, startY: 90, theme: 'striped', headStyles: { fillColor: [16, 185, 129] } });
-              let finalY = doc.lastAutoTable.finalY;
-              
-              const financialSummaryY = finalY + 10;
-              doc.setFontSize(10);
-              doc.text(`Subtotal: RM ${subtotal.toFixed(2)}`, 196, financialSummaryY, { align: 'right' });
-              doc.text(`SST (6%): RM ${sst.toFixed(2)}`, 196, financialSummaryY + 6, { align: 'right' });
-              doc.text(`Delivery: RM ${deliveryFee.toFixed(2)}`, 196, financialSummaryY + 12, { align: 'right' });
-              doc.setFont('helvetica', 'bold');
-              doc.setFontSize(12);
-              doc.text(`Grand Total: RM ${grandTotal.toFixed(2)}`, 196, financialSummaryY + 20, { align: 'right' });
-              doc.setTextColor(16, 185, 129);
-              doc.text(`Booking Deposit (50%): RM ${deposit.toFixed(2)}`, 196, financialSummaryY + 28, { align: 'right' });
-              doc.setTextColor(0, 0, 0);
-
-              finalY = financialSummaryY + 28;
-
-              const termsY = finalY + 15;
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'bold');
-              doc.text('Terms & Conditions:', 14, termsY);
-              doc.setFontSize(8);
-              doc.setFont('helvetica', 'normal');
-              const terms = [
-                  '• Deposit: 50% required upon booking', '• Balance: 50% due 7 days before event', '• Includes: Setup, configuration & support',
-                  '• Changes: Within 48hrs may incur additional fees', '• Cancellation: 30+ days: Full refund | 15-29 days: 50% refund | Within 14 days: No refund'
-              ];
-              doc.text(terms, 14, termsY + 5);
-              finalY = termsY + 5 + (terms.length * 4);
-              
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'italic');
-              doc.text('Thank you for booking with BMC Canopy!', 105, finalY + 10, { align: 'center' });
-              doc.save('BMC_Canopy_Booking_Slip.pdf');
-
-              // --- 3. WhatsApp Redirect ---
-              let summaryText = `Hello BMC Canopy, I would like to confirm my booking.\n\n`;
-              summaryText += `*BOOKING SUMMARY*\n`;
-              summaryText += `-----------------------------------\n`;
-              summaryText += `*Name:* ${bookingDetails.fullName || 'N/A'}\n`;
-              summaryText += `*Event Date:* ${bookingDetails.eventDate || 'N/A'}\n`;
-              summaryText += `*Contact:* ${bookingDetails.phone || 'N/A'}\n\n`;
-              summaryText += `*ITEMS ORDERED*\n`;
+              summaryText += `*SENARAI TEMPAHAN*\n`;
               
               if (bookingMode === BookingMode.AlaCarte) {
                 Object.entries(selectedCanopies).forEach(([compositeId, quantity]) => {
@@ -2011,7 +1921,12 @@
               if (bookingMode === BookingMode.Package && selectedPackage) {
                   summaryText += `- ${selectedPackage.name} (Package)\n`;
               }
+
+              if (selectedColor) {
+                  summaryText += `- Warna Kanopi: ${selectedColor.name}\n`;
+              }
               
+              const accessoryEntries = Object.entries(selectedAccessories).filter(([, qty]) => qty > 0);
               if (accessoryEntries.length > 0) {
                   summaryText += `\n*Accessories:*\n`;
                   accessoryEntries.forEach(([id, quantity]) => {
@@ -2022,17 +1937,21 @@
                   });
               }
 
-              summaryText += `\n-----------------------------------\n`;
-              summaryText += `*Grand Total:* RM ${grandTotal.toFixed(2)}\n`;
-              summaryText += `*Deposit (50%):* RM ${deposit.toFixed(2)}\n\n`;
-              summaryText += `My booking slip has been downloaded. I will send it here shortly. Thank you!`;
+              if (bookingDetails.specialRequests) {
+                  summaryText += `\n*Catatan*: ${bookingDetails.specialRequests}\n`;
+              }
+
+              summaryText += `\n*BAYARAN*\n`;
+              summaryText += `Grand Total: RM ${grandTotal.toFixed(2)}\n`;
+              summaryText += `Deposit (50%): RM ${deposit.toFixed(2)}\n`;
 
               const encodedText = encodeURIComponent(summaryText);
               const whatsappUrl = `https://wasap.my/60166327901?text=${encodedText}`;
 
+              // --- 3. Redirect ---
               window.open(whatsappUrl, '_blank');
               
-              alert('Booking saved and slip downloaded! You are being redirected to WhatsApp to confirm your order.');
+              alert('Booking data saved! Opening WhatsApp to complete your order...');
 
               navigateToHome();
           };
@@ -2150,8 +2069,7 @@
                                         Complete Booking
                                     </button>
                                     <p className="text-xs text-gray-500 mt-2 max-w-xs ml-auto">
-                                        After clicking, your booking slip will be downloaded. <br/>
-                                        You will be redirected to WhatsApp to send us the PDF to confirm your order.
+                                        Clicking this will save your booking and redirect you to WhatsApp to confirm your order details.
                                     </p>
                                 </div>
                               )}
