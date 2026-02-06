@@ -1,4 +1,1841 @@
 
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BMC Canopy Booking</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+      }
+      /* Add some basic styling for the drag handle */
+      .drag-handle {
+        cursor: grab;
+        color: #9ca3af;
+      }
+      .drag-handle:active {
+        cursor: grabbing;
+        color: #059669;
+      }
+      tr.dragging {
+        opacity: 0.5;
+        background-color: #f0fdf4;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50">
+    <div id="root"></div>
+
+    <!-- React Libraries -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Supabase Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <script type="text/babel">
+      const { useState, useMemo, useCallback, useEffect, useRef } = React;
+
+      // --- START: Supabase Client Setup ---
+      const { createClient } = supabase;
+      const SUPABASE_URL = 'https://qprokpxmguiojzjfpxrv.supabase.co';
+      const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwcm9rcHhtZ3Vpb2p6amZweHJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2NTM4MDYsImV4cCI6MjA4NDIyOTgwNn0.OsHaAVIopXD8YXVrTnTwFQ8yzMJbRa8g9jfZ0M-HRfQ';
+      const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      // --- END: Supabase Client Setup ---
+
+      // --- START: types.ts ---
+      var BookingMode;
+      (function (BookingMode) {
+          BookingMode["AlaCarte"] = "Ala Carte";
+          BookingMode["Package"] = "Package";
+      })(BookingMode || (BookingMode = {}));
+
+      // --- END: types.ts ---
+
+      // --- START: Initial Data (used for default state) ---
+      // This data is now fetched from Supabase. This is kept for reference.
+      const initialColors = [
+          { name: 'White', hex: '#FFFFFF' },
+          { name: 'Transparent', hex: 'transparent' },
+          { name: 'Sky Blue', hex: '#87CEEB' },
+          { name: 'Ivory', hex: '#FFFFF0' },
+          { name: 'Champagne', hex: '#F7E7CE' },
+          { name: 'Navy Blue', hex: '#000080' }
+      ];
+      // --- END: Initial Data ---
+      
+      // --- START: components/ItemCard.tsx ---
+      const ItemCard = ({ item, bookingMode, selectedCanopies, onQuantityChange, onSelect }) => {
+          const isSized = Array.isArray(item.sizes) && item.sizes.length > 0;
+          const [currentSize, setCurrentSize] = useState(isSized ? item.sizes[0] : null);
+
+          const isSelected = useMemo(() => {
+              if (isSized) {
+                  return Object.keys(selectedCanopies).some(k => k.startsWith(item.id) && selectedCanopies[k] > 0);
+              }
+              return (selectedCanopies[item.id] || 0) > 0;
+          }, [selectedCanopies, item.id, isSized]);
+
+          const compositeId = isSized && currentSize ? `${item.id}_${currentSize.name}` : item.id;
+          const quantity = selectedCanopies[compositeId] || 0;
+          const price = isSized && currentSize ? currentSize.price : item.price;
+          
+          return (
+              <div className={`border rounded-xl overflow-hidden transition-all duration-300 flex flex-col ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500' : 'border-gray-200 hover:shadow-lg'}`}>
+                  {item.image_url && <img src={item.image_url} alt={item.name} className="w-full h-48 object-cover" />}
+                  <div className="p-6 flex-grow flex flex-col">
+                      <h3 className="text-xl font-bold text-gray-800">{item.name}</h3>
+                      <p className="text-2xl font-bold text-emerald-600 mt-2">RM {price || 'N/A'}</p>
+                      <p className="text-gray-600 mt-3 text-sm flex-grow">{item.description}</p>
+                      
+                      {isSized && (
+                          <div className="mt-4">
+                              <label htmlFor={`size-select-${item.id}`} className="block text-sm font-medium text-gray-700 mb-1">Select Size:</label>
+                              <select
+                                  id={`size-select-${item.id}`}
+                                  value={currentSize?.name}
+                                  onChange={(e) => {
+                                      const newSize = item.sizes.find(s => s.name === e.target.value);
+                                      if (newSize) setCurrentSize(newSize);
+                                  }}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-emerald-500 focus:border-emerald-500"
+                              >
+                                  {item.sizes.map(size => (
+                                      <option key={size.name} value={size.name}>
+                                          {size.name} - RM {size.price}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                      )}
+
+                      {item.items && (
+                          <ul className="mt-4 space-y-2 text-sm text-gray-500 list-disc list-inside">
+                              {item.items.map(listItem => <li key={listItem}>{listItem}</li>)}
+                          </ul>
+                      )}
+
+                      <div className="mt-6">
+                          {bookingMode === BookingMode.AlaCarte ? (
+                              <div className="flex items-center justify-center space-x-4">
+                                  <button
+                                      onClick={() => onQuantityChange(compositeId, Math.max(0, quantity - 1))}
+                                      className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center font-bold text-lg"
+                                      aria-label={`Decrease quantity of ${item.name}`}
+                                  >
+                                      -
+                                  </button>
+                                  <span className="w-12 text-center font-semibold text-2xl">{quantity}</span>
+                                  <button
+                                      onClick={() => onQuantityChange(compositeId, quantity + 1)}
+                                      className="w-10 h-10 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center font-bold text-lg"
+                                      aria-label={`Increase quantity of ${item.name}`}
+                                  >
+                                      +
+                                  </button>
+                              </div>
+                          ) : (
+                              <button
+                                  onClick={() => onSelect(item, currentSize)}
+                                  className="w-full bg-emerald-600 text-white font-semibold py-3 rounded-lg hover:bg-emerald-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                              >
+                                  {isSelected ? 'Selected' : 'Add to Selection'}
+                              </button>
+                          )}
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/ItemCard.tsx ---
+      
+      // --- START: components/SelectionSummary.tsx ---
+      const SelectionSummary = ({ bookingMode, selectedCanopies, canopies, selectedPackage, onCanopyQuantityChange, selectedAccessories, accessories, onAccessoryQuantityChange }) => {
+          const alaCarteEntries = Object.entries(selectedCanopies).filter(([, quantity]) => quantity > 0);
+          const accessoryEntries = Object.entries(selectedAccessories).filter(([, quantity]) => quantity > 0);
+
+          const hasPackage = bookingMode === BookingMode.Package && selectedPackage;
+          const hasAlaCarte = bookingMode === BookingMode.AlaCarte && alaCarteEntries.length > 0;
+          const hasAccessories = accessoryEntries.length > 0;
+
+          if (!hasPackage && !hasAlaCarte && !hasAccessories) {
+              return null;
+          }
+
+          let displaySubtotal = 0;
+
+          // Package item
+          const packageItem = hasPackage ? {
+              name: selectedPackage.name,
+              price: selectedPackage.price,
+          } : null;
+          if (packageItem) {
+              displaySubtotal += packageItem.price;
+          }
+
+          // Ala carte canopy items
+          const canopyItems = hasAlaCarte ? alaCarteEntries.map(([compositeId, quantity]) => {
+              const idParts = compositeId.split('_');
+              const canopyId = idParts[0];
+              const sizeName = idParts.length > 1 ? idParts[1] : null;
+              const canopy = canopies.find(c => c.id == canopyId);
+              if (!canopy) return null;
+
+              let price;
+              let name = canopy.name;
+              if (sizeName && canopy.sizes) {
+                  const size = canopy.sizes.find(s => s.name === sizeName);
+                  price = size ? size.price : 0;
+                  name = `${canopy.name} (${sizeName})`;
+              } else {
+                  price = canopy.price;
+              }
+              
+              const lineTotal = price * quantity;
+              displaySubtotal += lineTotal;
+              return { compositeId, name, quantity, price, lineTotal };
+          }).filter(Boolean) : [];
+
+          // Accessory items
+          const accessoryItems = hasAccessories ? accessoryEntries.map(([id, quantity]) => {
+              const accessory = accessories.find(a => a.id == id);
+              if (!accessory) return null;
+              const lineTotal = accessory.price * quantity;
+              displaySubtotal += lineTotal;
+              return {
+                  id,
+                  name: accessory.name,
+                  quantity,
+                  price: accessory.price,
+                  lineTotal,
+              };
+          }).filter(Boolean) : [];
+
+          return (
+              <div className="mt-12 bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                  <h3 className="text-xl font-bold text-gray-800 mb-4">Your Current Selection</h3>
+                  
+                  {packageItem && (
+                      <div className="space-y-4 pb-4 mb-4 border-b border-gray-200">
+                          <div className="bg-gray-50 p-4 rounded-lg">
+                              <p className="font-semibold text-gray-900">{packageItem.name}</p>
+                              <p className="text-sm text-gray-600">
+                                  Price: RM {packageItem.price.toFixed(2)}
+                              </p>
+                          </div>
+                      </div>
+                  )}
+                  
+                  {canopyItems.length > 0 && bookingMode === BookingMode.AlaCarte && (
+                      <div className={`space-y-4 ${hasAccessories ? 'pb-4 mb-4 border-b border-gray-200' : ''}`}>
+                          {canopyItems.map(item => (
+                              <div key={item.compositeId} className="flex justify-between items-center bg-gray-50 p-4 rounded-lg">
+                                  <div>
+                                      <p className="font-semibold text-gray-900">{item.name}</p>
+                                      <p className="text-sm text-gray-600">
+                                          Qty: {item.quantity} &times; RM {item.price.toFixed(2)} = RM {item.lineTotal.toFixed(2)}
+                                      </p>
+                                  </div>
+                                  <button 
+                                      onClick={() => onCanopyQuantityChange(item.compositeId, 0)}
+                                      className="text-sm font-medium text-red-600 hover:text-red-800"
+                                  >
+                                      Remove
+                                  </button>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+
+                  {accessoryItems.length > 0 && (
+                      <div className="space-y-4">
+                          <p className="font-semibold text-gray-700">Add-ons:</p>
+                          {accessoryItems.map(item => (
+                              <div key={item.id} className="flex justify-between items-center bg-gray-50 p-4 rounded-lg">
+                                  <div>
+                                      <p className="font-semibold text-gray-900">{item.name}</p>
+                                      <p className="text-sm text-gray-600">
+                                          Qty: {item.quantity} &times; RM {item.price.toFixed(2)} = RM {item.lineTotal.toFixed(2)}
+                                      </p>
+                                  </div>
+                                  <button 
+                                      onClick={() => onAccessoryQuantityChange(item.id, 0)}
+                                      className="text-sm font-medium text-red-600 hover:text-red-800"
+                                  >
+                                      Remove
+                                  </button>
+                              </div>
+                          ))}
+                      </div>
+                  )}
+
+                  <div className="mt-6 pt-4 border-t border-gray-200">
+                      <p className="text-right text-lg font-bold text-gray-800">
+                          Current Subtotal: RM {displaySubtotal.toFixed(2)}
+                      </p>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/SelectionSummary.tsx ---
+
+
+      // --- START: components/steps/Step1_Canopy.tsx ---
+      const Step1Canopy = ({ canopies, bookingMode, onModeChange, selectedCanopies, onQuantityChange, onSingleCanopySelect }) => {
+          return (
+              <div>
+                  <h2 className="text-3xl font-bold text-center text-gray-800">Choose Your Canopy</h2>
+                  <p className="text-center text-gray-600 mt-2">Select a base canopy to start your booking.</p>
+
+                  <div className="flex justify-center my-8">
+                      <div className="relative flex w-full max-w-xs p-1 bg-gray-200 rounded-full">
+                          <span
+                              className="absolute top-0 left-0 w-1/2 h-full p-1 transition-transform duration-300 ease-in-out"
+                              style={{ transform: bookingMode === BookingMode.AlaCarte ? 'translateX(0%)' : 'translateX(98%)' }}
+                          >
+                              <span className="block w-full h-full bg-white rounded-full shadow-md"></span>
+                          </span>
+                          <button 
+                              onClick={() => onModeChange(BookingMode.AlaCarte)} 
+                              className="relative z-10 w-1/2 py-2 text-sm font-semibold text-center transition-colors duration-300"
+                          >
+                              Ala Carte
+                          </button>
+                          <button 
+                              onClick={() => onModeChange(BookingMode.Package)} 
+                              className="relative z-10 w-1/2 py-2 text-sm font-semibold text-center transition-colors duration-300"
+                          >
+                              Package
+                          </button>
+                      </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 lg:grid-cols-2 gap-8 mt-10">
+                      {canopies.map(canopy => (
+                          <ItemCard 
+                              key={canopy.id} 
+                              item={canopy}
+                              bookingMode={bookingMode}
+                              selectedCanopies={selectedCanopies}
+                              onQuantityChange={onQuantityChange}
+                              onSelect={onSingleCanopySelect}
+                          />
+                      ))}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/steps/Step1_Canopy.tsx ---
+
+      // --- START: components/steps/Step2_Package.tsx ---
+      const Step2Package = ({ packages, onSelect }) => {
+          const [localSelected, setLocalSelected] = useState(null);
+
+          const handleSelect = (pkg) => {
+              setLocalSelected(pkg);
+              onSelect(pkg);
+          }
+
+          return (
+              <div>
+                  <h2 className="text-3xl font-bold text-center text-gray-800">Select a Package</h2>
+                  <p className="text-center text-gray-600 mt-2">Choose one of our curated packages for a complete setup.</p>
+                  <div className="grid md:grid-cols-2 gap-8 mt-10 max-w-4xl mx-auto">
+                      {packages.map(pkg => (
+                           <div key={pkg.id} onClick={() => handleSelect(pkg)} className={`border rounded-xl overflow-hidden transition-all duration-300 cursor-pointer ${localSelected?.id === pkg.id ? 'border-emerald-500 ring-2 ring-emerald-500' : 'border-gray-200 hover:shadow-lg'}`}>
+                              <div className="p-6">
+                                  <h3 className="text-xl font-bold text-gray-800">{pkg.name}</h3>
+                                  <p className="text-2xl font-bold text-emerald-600 mt-2">RM {pkg.price}</p>
+                                  <p className="text-gray-600 mt-3 text-sm">{pkg.description}</p>
+                                  <ul className="mt-4 space-y-2 text-sm text-gray-500 list-disc list-inside">
+                                      {pkg.items.map(listItem => <li key={listItem}>{listItem}</li>)}
+                                  </ul>
+                                  <button
+                                      className="w-full mt-6 bg-emerald-600 text-white font-semibold py-3 rounded-lg hover:bg-emerald-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
+                                  >
+                                      {localSelected?.id === pkg.id ? 'Selected' : 'Select Package'}
+                                  </button>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/steps/Step2_Package.tsx ---
+
+      // --- START: components/steps/Step3_Color.tsx ---
+      const Step3Color = ({ colors, onSelect, selectedColor }) => {
+          return (
+              <div className="max-w-2xl mx-auto">
+                  <h2 className="text-3xl font-bold text-center text-gray-800">Select Canopy Color</h2>
+                  <p className="text-center text-gray-600 mt-2">Pick a color for your canopy canvas.</p>
+
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-6 mt-10">
+                      {colors.map((color) => (
+                          <div key={color.name} className="flex flex-col items-center cursor-pointer" onClick={() => onSelect(color)}>
+                              <div
+                                  className={`w-20 h-20 rounded-full border-4 transition-all ${
+                                      selectedColor?.name === color.name ? 'border-emerald-500 scale-110' : 'border-transparent'
+                                  }`}
+                                  style={{ backgroundColor: color.hex, border: color.name === 'White' ? '1px solid #ddd' : 'none' }}
+                              >
+                                {color.name === 'Transparent' && (
+                                  <div className="w-full h-full bg-transparent rounded-full border-2 border-dashed border-gray-400"></div>
+                                )}
+                              </div>
+                              <p className={`mt-3 font-semibold ${selectedColor?.name === color.name ? 'text-emerald-600' : 'text-gray-700'}`}>
+                                  {color.name}
+                              </p>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/steps/Step3_Color.tsx ---
+
+      // --- START: components/steps/Step4_Accessories.tsx ---
+      const AccessoryItem = ({ accessory, quantity, onQuantityChange }) => {
+        const isSelected = quantity > 0;
+        return (
+            <div className={`border rounded-xl overflow-hidden transition-all duration-300 flex flex-col ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-500' : 'border-gray-200 hover:shadow-lg'}`}>
+                <img src={accessory.image_url} alt={accessory.name} className="w-full h-40 object-cover" />
+                <div className="p-4 flex-grow flex flex-col text-center">
+                    <p className="font-semibold text-gray-800 flex-grow">{accessory.name}</p>
+                    <p className="text-lg text-emerald-600 font-bold mt-2">RM {accessory.price}</p>
+                    <div className="flex items-center justify-center space-x-4 mt-4">
+                        <button
+                            onClick={() => onQuantityChange(accessory.id, Math.max(0, quantity - 1))}
+                            className="w-8 h-8 rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center font-bold"
+                            aria-label={`Decrease quantity of ${accessory.name}`}
+                        >
+                            -
+                        </button>
+                        <span className="w-10 text-center font-semibold text-xl">{quantity}</span>
+                        <button
+                            onClick={() => onQuantityChange(accessory.id, quantity + 1)}
+                            className="w-8 h-8 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center font-bold"
+                            aria-label={`Increase quantity of ${accessory.name}`}
+                        >
+                            +
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+      };
+      const Step4Accessories = ({ accessories, selectedAccessories, onQuantityChange }) => {
+          const accessoryCategories = Array.from(new Set(accessories.map(a => a.category)));
+
+          return (
+              <div className="max-w-6xl mx-auto">
+                  <h2 className="text-3xl font-bold text-center text-gray-800">Accessorize Your Event</h2>
+                  <p className="text-center text-gray-600 mt-2">Add optional items to enhance your setup.</p>
+                  <div className="mt-10 space-y-12">
+                      {accessoryCategories.map(category => (
+                          <div key={category}>
+                              <h3 className="text-2xl font-bold text-gray-800 mb-4 border-b pb-2">{category}</h3>
+                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                                {accessories.filter(a => a.category === category).map((accessory) => (
+                                    <AccessoryItem
+                                        key={accessory.id}
+                                        accessory={accessory}
+                                        quantity={selectedAccessories[accessory.id] || 0}
+                                        onQuantityChange={onQuantityChange}
+                                    />
+                                ))}
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/steps/Step4_Accessories.tsx ---
+
+      // --- START: components/steps/Step5_Details.tsx ---
+      const FormField = ({ label, name, value, onChange, type = 'text', isTextArea = false, placeholder }) => (
+          <div>
+              <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+              {isTextArea ? (
+                  <textarea
+                      id={name}
+                      name={name}
+                      value={value}
+                      onChange={onChange}
+                      rows={4}
+                      placeholder={placeholder}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+              ) : (
+                  <input
+                      type={type}
+                      id={name}
+                      name={name}
+                      value={value}
+                      onChange={onChange}
+                      placeholder={placeholder}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-emerald-500 focus:border-emerald-500"
+                  />
+              )}
+          </div>
+      );
+      const Step5Details = ({ details, setDetails }) => {
+          const handleChange = (e) => {
+              const { name, value } = e.target;
+              setDetails(prev => ({ ...prev, [name]: value }));
+          };
+
+          return (
+              <div>
+                  <h2 className="text-3xl font-bold text-gray-800">Booking Details</h2>
+                  <p className="text-gray-600 mt-2">Please provide your information to finalize the booking.</p>
+
+                  <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="md:col-span-2">
+                          <FormField label="Full Name" name="fullName" value={details.fullName} onChange={handleChange} placeholder="John Doe" />
+                      </div>
+                      <FormField label="Email" name="email" value={details.email} onChange={handleChange} type="email" placeholder="john.doe@example.com" />
+                      <FormField label="Phone Number" name="phone" value={details.phone} onChange={handleChange} type="tel" placeholder="012-345 6789" />
+                      <FormField label="Event Date" name="eventDate" value={details.eventDate} onChange={handleChange} type="date" />
+                      <FormField label="Event Time" name="eventTime" value={details.eventTime} onChange={handleChange} type="time" />
+                      <FormField label="Estimated Guest Count" name="guestCount" value={details.guestCount} onChange={handleChange} type="number" placeholder="e.g., 100" />
+                      <FormField label="Event Location / Address" name="location" value={details.location} onChange={handleChange} placeholder="Full address of the event" />
+                      <div className="md:col-span-2">
+                          <FormField label="Special Requests" name="specialRequests" value={details.specialRequests} onChange={handleChange} isTextArea placeholder="Any special requirements or notes..." />
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/steps/Step5_Details.tsx ---
+
+      // --- START: components/OrderSummary.tsx ---
+      const OrderSummary = ({
+          canopies,
+          accessories,
+          selectedCanopies,
+          selectedPackage,
+          selectedColor,
+          selectedAccessories,
+          subtotal,
+          sst,
+          deliveryFee,
+          grandTotal,
+          deposit,
+          bookingMode
+      }) => {
+
+          const SummaryLineItem = ({ label, value, isBold, isPrice }) => (
+              <div className={`flex justify-between items-center py-1 ${isBold ? 'font-bold' : ''}`}>
+                  <p className="text-gray-600 text-sm">{label}</p>
+                  <p className={`${isBold ? 'text-gray-800 text-base' : 'text-gray-700 text-sm'}`}>{isPrice && 'RM '}{value}</p>
+              </div>
+          );
+
+          const canopyEntries = Object.entries(selectedCanopies).filter(([, quantity]) => quantity > 0);
+
+          return (
+              <div className="bg-gray-50 rounded-2xl p-6 border border-gray-200 h-full">
+                  <h2 className="text-2xl font-bold text-gray-800 border-b pb-4 mb-4">Order Summary</h2>
+                  <div className="space-y-4">
+                      {canopyEntries.length > 0 && (
+                          <div className="space-y-2 pb-4 border-b">
+                                {bookingMode === BookingMode.AlaCarte && canopyEntries.map(([compositeId, quantity]) => {
+                                    const idParts = compositeId.split('_');
+                                    const canopyId = idParts[0];
+                                    const sizeName = idParts.length > 1 ? idParts[1] : null;
+
+                                    const canopy = canopies.find(c => c.id == canopyId);
+                                    if (!canopy) return null;
+
+                                    let price;
+                                    let name = canopy.name;
+
+                                    if (sizeName && canopy.sizes) {
+                                        const size = canopy.sizes.find(s => s.name === sizeName);
+                                        price = size ? size.price : 0;
+                                        name = `${canopy.name} (${sizeName})`;
+                                    } else {
+                                        price = canopy.price;
+                                    }
+                                    
+                                    return (
+                                        <SummaryLineItem 
+                                            key={compositeId} 
+                                            label={`${name} x${quantity}`} 
+                                            value={(price * quantity).toFixed(2)} 
+                                            isBold 
+                                            isPrice 
+                                        />
+                                    );
+                                })}
+                                {selectedColor && <SummaryLineItem label="Color (All Canopies)" value={selectedColor.name} />}
+                          </div>
+                      )}
+                      
+                      {bookingMode === BookingMode.Package && selectedPackage && (
+                          <div className="space-y-2 pb-4 border-b">
+                              <SummaryLineItem label={selectedPackage.name} value={selectedPackage.price.toFixed(2)} isBold isPrice />
+                              <div className="pl-4 text-sm text-gray-500 pt-2">
+                                {selectedPackage.items.map(item => <p key={item}>- {item}</p>)}
+                              </div>
+                          </div>
+                      )}
+
+                      {Object.keys(selectedAccessories).length > 0 && (
+                          <div className="space-y-2 pb-4 border-b">
+                              <p className="font-bold text-gray-600 text-base">Add-ons:</p>
+                              {Object.entries(selectedAccessories).map(([id, quantity]) => {
+                                  const accessory = accessories.find(a => a.id == id);
+                                  if (!accessory || quantity === 0) return null;
+                                  return <SummaryLineItem key={id} label={`${accessory.name} x${quantity}`} value={(accessory.price * Number(quantity)).toFixed(2)} isPrice />;
+                              })}
+                          </div>
+                      )}
+                        
+                      <div className="pt-4 space-y-2">
+                            <SummaryLineItem label="Subtotal" value={subtotal.toFixed(2)} isPrice />
+                            <SummaryLineItem label="SST (6%)" value={sst.toFixed(2)} isPrice />
+                            <SummaryLineItem label="Delivery" value={deliveryFee.toFixed(2)} isPrice />
+                            <div className="flex justify-between items-center text-xl font-bold text-emerald-700 mt-4 pt-4 border-t">
+                                <p>Grand Total</p>
+                                <p>RM {grandTotal.toFixed(2)}</p>
+                            </div>
+                            <div className="flex justify-between items-center text-lg font-semibold text-gray-800 mt-2 bg-emerald-50 p-3 rounded-lg">
+                                <p>Booking Deposit (50%)</p>
+                                <p>RM {deposit.toFixed(2)}</p>
+                            </div>
+                        </div>
+                  </div>
+
+                  <div className="mt-6 pt-4 border-t border-gray-200">
+                      <h3 className="text-lg font-bold text-gray-800 mb-2">Terms & Conditions</h3>
+                      <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
+                          <li><strong>Deposit:</strong> 50% required upon booking</li>
+                          <li><strong>Balance:</strong> 50% due 7 days before event</li>
+                          <li><strong>Includes:</strong> Setup, configuration & support</li>
+                          <li><strong>Changes:</strong> Within 48hrs may incur additional fees</li>
+                          <li><strong>Cancellation:</strong> 30+ days: Full refund | 15-29 days: 50% refund | Within 14 days: No refund</li>
+                      </ul>
+                  </div>
+
+              </div>
+          );
+      };
+      // --- END: components/OrderSummary.tsx ---
+
+      // --- START: components/ProgressBar.tsx ---
+      const ProgressBar = ({ steps, currentStep }) => {
+          return (
+              <div className="w-full">
+                  <div className="flex items-center justify-between">
+                      {steps.map((step, index) => {
+                          const stepNumber = index + 1;
+                          const isActive = stepNumber <= currentStep;
+                          const isCurrent = stepNumber === currentStep;
+                          return (
+                              <React.Fragment key={step}>
+                                  <div className="flex flex-col items-center text-center">
+                                      <div
+                                          className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${
+                                              isActive ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500'
+                                          }`}
+                                      >
+                                          {stepNumber}
+                                      </div>
+                                      <p className={`mt-2 text-xs md:text-sm font-semibold transition-all duration-300 ${isCurrent ? 'text-emerald-600' : 'text-gray-500'}`}>
+                                          {step}
+                                      </p>
+                                  </div>
+                                  {index < steps.length - 1 && (
+                                      <div className={`flex-1 h-1 mx-2 md:mx-4 rounded-full ${isActive ? 'bg-emerald-600' : 'bg-gray-200'}`}></div>
+                                  )}
+                              </React.Fragment>
+                          );
+                      })}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/ProgressBar.tsx ---
+
+      // --- START: components/HomePage.tsx ---
+      const Feature = ({ icon, title, description }) => (
+          <div className="flex flex-col items-center text-center p-6">
+              <div className="bg-emerald-100 text-emerald-600 rounded-full p-4 mb-4">
+                  {icon}
+              </div>
+              <h3 className="text-xl font-bold text-gray-800 mb-2">{title}</h3>
+              <p className="text-gray-600">{description}</p>
+          </div>
+      );
+      const HomePage = ({ onBookNowClick }) => {
+          return (
+              <div className="bg-white">
+                  <div className="relative bg-gray-800">
+                      <div className="absolute inset-0">
+                          <img
+                              className="w-full h-full object-cover"
+                              src="https://www.brides.com/thmb/DpIeSpdiOA87EH1yfzMBunHN_T0=/1500x0/filters:no_upscale():max_bytes(150000):strip_icc():format(webp)/clear-span-structure-tent-tamara-gruner-aea4e850059b468ebe4c0c7527812307.jpg"
+                              alt="Elegant event setup under a canopy"
+                          />
+                          <div className="absolute inset-0 bg-gray-900 bg-opacity-60" aria-hidden="true"></div>
+                      </div>
+                      <div className="relative max-w-7xl mx-auto py-24 px-4 sm:py-32 sm:px-6 lg:px-8 text-center text-white">
+                          <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl">Your Perfect Event, Covered.</h1>
+                          <p className="mt-6 max-w-2xl mx-auto text-xl text-gray-200">
+                              From intimate gatherings to grand celebrations, BMC Canopy provides premium shelter solutions with style and simplicity.
+                          </p>
+                          <div className="mt-10">
+                              <button
+                                  onClick={onBookNowClick}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 px-10 rounded-lg text-lg transition-all duration-300 transform hover:scale-105 shadow-lg"
+                              >
+                                  Book Your Canopy Today
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+                  <div className="py-16 sm:py-24 bg-gray-50">
+                      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                          <div className="text-center mb-12">
+                              <h2 className="text-3xl font-extrabold text-gray-900">Why Choose BMC Canopy?</h2>
+                              <p className="mt-4 text-lg text-gray-600">We make event planning easier and more elegant.</p>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                              <Feature
+                                  icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+                                  title="Premium Quality"
+                                  description="Our canopies are durable, stylish, and meticulously maintained to ensure your event looks its best, rain or shine."
+                              />
+                              <Feature
+                                icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>}
+                                  title="Flexible Packages"
+                                  description="Choose from curated packages or build your own setup 'Ala Carte'. Get exactly what you need, with no hidden costs."
+                              />
+                              <Feature
+                                icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>}
+                                  title="Effortless Booking"
+                                  description="Our simple, step-by-step booking process lets you customize and confirm your rental in minutes, not hours."
+                              />
+                          </div>
+                      </div>
+                  </div>
+                  <div className="py-16 sm:py-24">
+                      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+                          <h2 className="text-3xl font-extrabold text-gray-900">Book in 3 Simple Steps</h2>
+                          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
+                              <div className="flex flex-col items-center">
+                                  <div className="flex items-center justify-center w-20 h-20 bg-emerald-600 text-white rounded-full text-3xl font-bold mb-4">1</div>
+                                  <h3 className="text-xl font-bold mb-2">Select & Customize</h3>
+                                  <p className="text-gray-600">Choose your ideal canopy, pick a color, and decide between our value packages or an ala-carte setup.</p>
+                              </div>
+                              <div className="flex flex-col items-center">
+                                  <div className="flex items-center justify-center w-20 h-20 bg-emerald-600 text-white rounded-full text-3xl font-bold mb-4">2</div>
+                                  <h3 className="text-xl font-bold mb-2">Add Accessories</h3>
+                                  <p className="text-gray-600">Enhance your event with our wide range of add-ons, from elegant chairs to cooling fans and decor.</p>
+                              </div>
+                              <div className="flex flex-col items-center">
+                                  <div className="flex items-center justify-center w-20 h-20 bg-emerald-600 text-white rounded-full text-3xl font-bold mb-4">3</div>
+                                  <h3 className="text-xl font-bold mb-2">Confirm & Celebrate</h3>
+                                  <p className="text-gray-600">Fill in your event details, review your order, and complete the booking. We'll handle the rest!</p>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+                  <div className="bg-emerald-700">
+                      <div className="max-w-2xl mx-auto text-center py-16 px-4 sm:py-20 sm:px-6 lg:px-8">
+                          <h2 className="text-3xl font-extrabold text-white sm:text-4xl">
+                              <span className="block">Ready to plan your event?</span>
+                              <span className="block">Let's get started.</span>
+                          </h2>
+                          <button
+                              onClick={onBookNowClick}
+                              className="mt-8 w-full inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-emerald-600 bg-white hover:bg-emerald-50 sm:w-auto"
+                          >
+                              Start Your Booking
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/HomePage.tsx ---
+
+      // --- START: components/AboutPage.tsx ---
+      const AboutPage = ({ onBookNowClick }) => {
+          return (
+              <div className="bg-white">
+                  <div className="bg-gray-50 py-16 sm:py-24">
+                      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+                          <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 sm:text-5xl lg:text-6xl">
+                              Crafting Unforgettable Events, One Canopy at a Time.
+                          </h1>
+                          <p className="mt-6 max-w-3xl mx-auto text-xl text-gray-600">
+                              Learn about our passion for quality and our commitment to making your special occasions perfect.
+                          </p>
+                      </div>
+                  </div>
+                  <div className="py-16 sm:py-24 overflow-hidden">
+                      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+                              <div>
+                                  <h2 className="text-3xl font-extrabold text-gray-900">Our Story</h2>
+                                  <p className="mt-4 text-lg text-gray-600">
+                                      BMC Canopy was founded on a simple principle: every event deserves a beautiful, reliable, and stress-free foundation. We started as a small team with a passion for bringing people together, and we saw a need for high-quality canopy rentals that were matched by even higher-quality customer service.
+                                  </p>
+                                  <p className="mt-4 text-lg text-gray-600">
+                                      Today, we've grown, but our core mission remains the same. We believe we're providing more than just shelter; we're providing the perfect backdrop for your most cherished memories—from weddings and corporate functions to backyard parties and community gatherings.
+                                  </p>
+                              </div>
+                              <div className="rounded-lg overflow-hidden shadow-lg">
+                                <img
+                                      className="w-full h-full object-cover"
+                                      src="https://static.wixstatic.com/media/3e78b5_be180e083bc544468174df896f32a2ed~mv2.jpg/v1/fill/w_865,h_489,al_c,q_85/3e78b5_be180e083bc544468174df896f32a2ed~mv2.jpg"
+                                      alt="Team setting up a canopy"
+                                  />
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+                  <div className="py-16 sm:py-24 bg-gray-50">
+                      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                          <div className="text-center mb-12">
+                              <h2 className="text-3xl font-extrabold text-gray-900">Our Commitment to You</h2>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                              <div className="text-center p-6">
+                                  <h3 className="text-xl font-bold text-emerald-600 mb-2">Quality You can Trust</h3>
+                                  <p className="text-gray-600">Every piece of equipment, from our largest marquee tent to the smallest chair, is meticulously maintained, cleaned, and inspected to ensure it meets our rigorous standards.</p>
+                              </div>
+                              <div className="text-center p-6">
+                                  <h3 className="text-xl font-bold text-emerald-600 mb-2">Service That Shines</h3>
+                                  <p className="text-gray-600">Our dedicated team is here to support you at every step. From initial inquiry to final takedown, we pride ourselves on being professional, punctual, and helpful.</p>
+                              </div>
+                              <div className="text-center p-6">
+                                  <h3 className="text-xl font-bold text-emerald-600 mb-2">Flexibility for Your Vision</h3>
+                                  <p className="text-gray-600">Whether you need a simple, elegant setup or a fully customized package with all the trimmings, our flexible booking options are designed to bring your unique vision to life.</p>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+                  <div className="bg-emerald-700">
+                      <div className="max-w-2xl mx-auto text-center py-16 px-4 sm:py-20 sm:px-6 lg:px-8">
+                          <h2 className="text-3xl font-extrabold text-white sm:text-4xl">
+                              <span className="block">Ready to make your next event a success?</span>
+                          </h2>
+                          <p className="mt-4 text-lg leading-6 text-emerald-200">
+                              Let us help you create the perfect setting.
+                          </p>
+                          <button
+                              onClick={onBookNowClick}
+                              className="mt-8 w-full inline-flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-md text-emerald-600 bg-white hover:bg-emerald-50 sm:w-auto"
+                          >
+                              Start Your Booking
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/AboutPage.tsx ---
+
+      // --- START: components/ContactPage.tsx ---
+      const ContactPage = () => {
+          return (
+              <div className="bg-white">
+                  <div className="max-w-7xl mx-auto py-16 px-4 sm:px-6 lg:py-24 lg:px-8">
+                      <div className="divide-y-2 divide-gray-200">
+                          <div className="lg:grid lg:grid-cols-3 lg:gap-8">
+                              <h2 className="text-2xl font-extrabold text-gray-900 sm:text-3xl">Get in touch</h2>
+                              <div className="mt-8 grid grid-cols-1 gap-12 sm:grid-cols-2 sm:gap-x-8 sm:gap-y-12 lg:mt-0 lg:col-span-2">
+                                  <div>
+                                      <h3 className="text-lg leading-6 font-medium text-gray-900">Collaborate</h3>
+                                      <dl className="mt-2 text-base text-gray-500">
+                                          <div><dd>+6016-6327901</dd></div>
+                                          <div className="mt-1"><dd>azrbooking.space@gmail.com</dd></div>
+                                      </dl>
+                                  </div>
+                                  <div>
+                                      <h3 className="text-lg leading-6 font-medium text-gray-900">Our Office</h3>
+                                      <dl className="mt-2 text-base text-gray-500">
+                                          <dd>Berkat Maju Canopy Enterprise (CA0035524-M)</dd>
+                                          <dd>NO.128, Lorong sg. isap 80,</dd>
+                                          <dd>Sg. isap perdana, 25150 Kuantan, Pahang.</dd>
+                                      </dl>
+                                  </div>
+                                  <div>
+                                      <h3 className="text-lg leading-6 font-medium text-gray-900">Opening Hours</h3>
+                                      <dl className="mt-2 text-base text-gray-500">
+                                          <dd>Monday - Friday</dd>
+                                          <dd>9:00 AM - 6:00 PM</dd>
+                                          <dd>Sat & Sun: By Appointment</dd>
+                                      </dl>
+                                  </div>
+                              </div>
+                          </div>
+                          <div className="mt-16 pt-16 lg:grid lg:grid-cols-3 lg:gap-8">
+                              <h2 className="text-2xl font-extrabold text-gray-900 sm:text-3xl">Our Location</h2>
+                              <div className="mt-8 lg:mt-0 lg:col-span-2">
+                                  <div className="rounded-lg overflow-hidden shadow-lg">
+                                      <iframe
+                                          src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3981.089413695223!2d103.27506517497417!3d3.7907068961831523!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x31c8b0ba82abfd1d%3A0x9fdeb1b4497fbee6!2s128%2C%20Lorong%20Sungai%20Isap%2080%2C%20Perumahan%20Sungai%20Isap%20Tiga%2C%2025150%20Kuantan%2C%20Pahang!5e0!3m2!1sen!2smy!4v1768967365932!5m2!1sen!2smy"
+                                          width="100%"
+                                          height="450"
+                                          style={{ border: 0 }}
+                                          allowFullScreen=""
+                                          loading="lazy"
+                                          referrerPolicy="no-referrer-when-downgrade"
+                                      ></iframe>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: components/ContactPage.tsx ---
+
+      // --- START: components/Header.tsx ---
+      const Header = ({ activeView, onNavigateHome, onNavigateToBooking, onNavigateToAbout, onNavigateToContact }) => {
+          const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+          const linkClasses = "px-3 py-2 rounded-md text-sm font-medium transition-colors";
+          const inactiveClasses = "text-gray-600 hover:text-emerald-600";
+          const activeClasses = "text-emerald-600 font-semibold";
+
+          const mobileLinkClasses = "block px-3 py-2 rounded-md text-base font-medium";
+          const mobileInactiveClasses = "text-gray-700 hover:text-white hover:bg-emerald-600";
+          const mobileActiveClasses = "bg-emerald-700 text-white";
+
+          const handleMobileLinkClick = (navigationFunction) => {
+              navigationFunction();
+              setIsMobileMenuOpen(false);
+          };
+
+          return (
+              <header className="bg-white shadow-sm sticky top-0 z-50">
+                  <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                      <div className="flex justify-between items-center h-20">
+                          <div className="flex-shrink-0">
+                              <button onClick={() => handleMobileLinkClick(onNavigateHome)} className="text-2xl font-bold text-emerald-600">
+                                  BMC Canopy
+                              </button>
+                          </div>
+                          {/* Desktop Menu */}
+                          <div className="hidden md:block">
+                              <div className="ml-10 flex items-baseline space-x-4">
+                                  <button onClick={onNavigateHome} className={`${linkClasses} ${activeView === 'home' ? activeClasses : inactiveClasses}`}>Home</button>
+                                  <button onClick={onNavigateToBooking} className={`${linkClasses} ${activeView === 'booking' ? activeClasses : inactiveClasses}`}>Book Now</button>
+                                  <button onClick={onNavigateToAbout} className={`${linkClasses} ${activeView === 'about' ? activeClasses : inactiveClasses}`}>About</button>
+                                  <button onClick={onNavigateToContact} className={`${linkClasses} ${activeView === 'contact' ? activeClasses : inactiveClasses}`}>Contact</button>
+                              </div>
+                          </div>
+                          {/* Mobile Menu Button */}
+                          <div className="md:hidden flex items-center">
+                              <button
+                                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                                  className="inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-white hover:bg-emerald-600 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
+                                  aria-controls="mobile-menu"
+                                  aria-expanded={isMobileMenuOpen}
+                              >
+                                  <span className="sr-only">Open main menu</span>
+                                  {isMobileMenuOpen ? (
+                                      <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                  ) : (
+                                      <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                                      </svg>
+                                  )}
+                              </button>
+                          </div>
+                      </div>
+                  </nav>
+
+                  {/* Mobile Menu, show/hide based on menu state. */}
+                  {isMobileMenuOpen && (
+                      <div className="md:hidden" id="mobile-menu">
+                          <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                              <button onClick={() => handleMobileLinkClick(onNavigateHome)} className={`w-full text-left ${mobileLinkClasses} ${activeView === 'home' ? mobileActiveClasses : mobileInactiveClasses}`}>Home</button>
+                              <button onClick={() => handleMobileLinkClick(onNavigateToBooking)} className={`w-full text-left ${mobileLinkClasses} ${activeView === 'booking' ? mobileActiveClasses : mobileInactiveClasses}`}>Book Now</button>
+                              <button onClick={() => handleMobileLinkClick(onNavigateToAbout)} className={`w-full text-left ${mobileLinkClasses} ${activeView === 'about' ? mobileActiveClasses : mobileInactiveClasses}`}>About</button>
+                              <button onClick={() => handleMobileLinkClick(onNavigateToContact)} className={`w-full text-left ${mobileLinkClasses} ${activeView === 'contact' ? mobileActiveClasses : mobileInactiveClasses}`}>Contact</button>
+                          </div>
+                      </div>
+                  )}
+              </header>
+          );
+      };
+      // --- END: components/Header.tsx ---
+
+      // --- START: components/Footer.tsx ---
+      const Footer = ({ onNavigateHome, onNavigateToBooking, onNavigateToAbout, onNavigateToContact, onNavigateToLogin }) => {
+          const currentYear = new Date().getFullYear();
+
+          return (
+              <footer className="bg-gray-800 text-white">
+                  <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+                      <div className="md:flex md:items-center md:justify-between">
+                          <div className="flex justify-center space-x-6 md:order-2">
+                              <a href="https://wasap.my/+60166327901" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-white">
+                                  <span className="sr-only">WhatsApp</span>
+                                  <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.06 22L7.31 20.62C8.75 21.41 10.36 21.86 12.04 21.86C17.5 21.86 21.95 17.41 21.95 11.95C21.95 6.49 17.5 2 12.04 2M12.04 20.13C10.56 20.13 9.12 19.71 7.89 18.93L7.53 18.72L4.35 19.65L5.3 16.54L5.07 16.17C4.21 14.86 3.77 13.38 3.77 11.85C3.77 7.39 7.49 3.67 12.04 3.67C16.59 3.67 20.31 7.39 20.31 11.85C20.31 16.31 16.6 20.13 12.04 20.13M17.44 14.59C17.24 14.59 16.03 13.98 15.83 13.9C15.63 13.82 15.5 13.78 15.38 14C15.25 14.22 14.79 14.73 14.63 14.89C14.46 15.04 14.3 15.06 14.04 14.98C13.79 14.9 12.85 14.59 11.75 13.63C10.89 12.89 10.32 12.08 10.19 11.85C10.07 11.63 10.18 11.51 10.31 11.39C10.42 11.29 10.56 11.12 10.69 10.97C10.81 10.82 10.86 10.7 10.98 10.48C11.1 10.26 11.02 10.08 10.94 9.93C10.86 9.77 10.3 8.56 10.09 8.09C9.88 7.63 9.68 7.69 9.53 7.69C9.4 7.69 9.24 7.69 9.08 7.69C8.92 7.69 8.65 7.77 8.43 7.97C8.2 8.17 7.69 8.63 7.69 9.73C7.69 10.83 9.1 12.21 9.22 12.37C9.34 12.53 11.42 15.81 14.54 17.21C15.35 17.58 16 17.75 16.48 17.73C17.06 17.71 17.89 17.15 18.09 16.5C18.29 15.85 18.29 15.31 18.21 15.23C18.13 15.15 17.98 15.08 17.82 15C17.66 14.91 17.76 14.59 17.44 14.59Z" />
+                                  </svg>
+                              </a>
+                          </div>
+                          <div className="mt-8 md:mt-0 md:order-1">
+                              <p className="text-center text-base text-gray-400">&copy; {currentYear} Berkat Maju Canopy Enterprise (CA0035524-M). All Rights Reserved.</p>
+                          </div>
+                      </div>
+                      <div className="mt-8 border-t border-gray-700 pt-8 md:flex md:items-center md:justify-center">
+                          <div className="flex space-x-6 justify-center">
+                              <button onClick={onNavigateHome} className="text-base text-gray-400 hover:text-white">Home</button>
+                              <button onClick={onNavigateToBooking} className="text-base text-gray-400 hover:text-white">Book Now</button>
+                              <button onClick={onNavigateToAbout} className="text-base text-gray-400 hover:text-white">About</button>
+                              <button onClick={onNavigateToContact} className="text-base text-gray-400 hover:text-white">Contact</button>
+                              <button onClick={onNavigateToLogin} className="text-base text-gray-400 hover:text-white">Admin Login</button>
+                          </div>
+                      </div>
+                  </div>
+              </footer>
+          );
+      };
+      // --- END: components/Footer.tsx ---
+
+      // --- START: admin/LoginPage.tsx ---
+      const LoginPage = ({ onLogin }) => {
+          const [username, setUsername] = useState('');
+          const [password, setPassword] = useState('');
+          const [error, setError] = useState('');
+
+          const handleSubmit = (e) => {
+              e.preventDefault();
+              if (onLogin(username, password)) {
+                  setError('');
+              } else {
+                  setError('Invalid username or password.');
+              }
+          };
+
+          return (
+              <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                  <div className="w-full max-w-md p-8 space-y-8 bg-white rounded-2xl shadow-lg">
+                      <div className="text-center">
+                        <h1 className="text-3xl font-bold text-emerald-600">BMC Canopy</h1>
+                        <h2 className="mt-2 text-2xl font-bold text-gray-800">Admin Portal Login</h2>
+                      </div>
+                      <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+                          <div className="rounded-md shadow-sm -space-y-px">
+                              <div>
+                                  <input 
+                                      name="username" 
+                                      type="text" 
+                                      required 
+                                      className="appearance-none rounded-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 focus:z-10 sm:text-sm" 
+                                      placeholder="Username"
+                                      value={username}
+                                      onChange={(e) => setUsername(e.target.value)}
+                                  />
+                              </div>
+                              <div>
+                                  <input 
+                                      name="password" 
+                                      type="password" 
+                                      required 
+                                      className="appearance-none rounded-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 focus:z-10 sm:text-sm" 
+                                      placeholder="Password"
+                                      value={password}
+                                      onChange={(e) => setPassword(e.target.value)} 
+                                  />
+                              </div>
+                          </div>
+                          {error && <p className="text-sm text-red-600 text-center">{error}</p>}
+                          <div>
+                              <button type="submit" className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
+                                  Sign in
+                              </button>
+                          </div>
+                      </form>
+                  </div>
+              </div>
+          );
+      };
+      // --- END: admin/LoginPage.tsx ---
+      
+      // --- START: admin/AdminModal.tsx ---
+      const AdminModal = ({ isOpen, onClose, title, children }) => {
+        if (!isOpen) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-screen overflow-y-auto">
+              <div className="flex justify-between items-center border-b pb-3">
+                <h3 className="text-xl font-semibold">{title}</h3>
+                <button onClick={onClose} className="text-black close-modal text-2xl">&times;</button>
+              </div>
+              <div className="mt-4">{children}</div>
+            </div>
+          </div>
+        );
+      };
+      // --- END: admin/AdminModal.tsx ---
+
+      // --- START: admin/ContentManager.tsx ---
+      const ContentManager = ({ title, items, fields, onSave, onDelete, onReorderSave }) => {
+        const [isModalOpen, setIsModalOpen] = useState(false);
+        const [currentItem, setCurrentItem] = useState(null);
+        
+        // Drag and Drop state
+        const [localItems, setLocalItems] = useState(items);
+        const dragItem = useRef(null);
+        const dragOverItem = useRef(null);
+        const [isOrderChanged, setIsOrderChanged] = useState(false);
+
+        // Sync local items when props change (e.g. after fetch or save)
+        useEffect(() => {
+            setLocalItems(items);
+            setIsOrderChanged(false);
+        }, [items]);
+
+        const handleDragStart = (e, position) => {
+            dragItem.current = position;
+            // Add a class for styling purposes if needed
+            e.target.closest('tr').classList.add('dragging');
+        };
+
+        const handleDragEnter = (e, position) => {
+            dragOverItem.current = position;
+            
+            // Optional: Reorder locally for visual feedback immediately
+            const copyListItems = [...localItems];
+            const dragItemContent = copyListItems[dragItem.current];
+            copyListItems.splice(dragItem.current, 1);
+            copyListItems.splice(dragOverItem.current, 0, dragItemContent);
+            
+            dragItem.current = position; // Update drag index to current position
+            setLocalItems(copyListItems);
+            setIsOrderChanged(true);
+        };
+
+        const handleDragEnd = (e) => {
+            e.target.closest('tr').classList.remove('dragging');
+            dragItem.current = null;
+            dragOverItem.current = null;
+        };
+
+        const handleSaveOrder = () => {
+            if (onReorderSave) {
+                onReorderSave(localItems);
+                setIsOrderChanged(false);
+            }
+        };
+
+        const openModal = (item = null) => {
+          const initialState = fields.reduce((acc, field) => {
+            if (field.type === 'textarea_array' && item && item[field.name]) {
+              acc[field.name] = item[field.name].join('\n');
+            } else if (field.type === 'textarea_json' && item && item[field.name]) {
+                try {
+                    acc[field.name] = JSON.stringify(item[field.name], null, 2);
+                } catch (e) {
+                    console.error("Failed to stringify JSON:", e);
+                    acc[field.name] = "{}";
+                }
+            } else {
+              acc[field.name] = item ? item[field.name] : '';
+            }
+            return acc;
+          }, {});
+          if(item) initialState.id = item.id;
+
+          setCurrentItem(initialState);
+          setIsModalOpen(true);
+        };
+
+        const closeModal = () => {
+          setIsModalOpen(false);
+          setCurrentItem(null);
+        };
+        
+        const handleSave = () => {
+          const itemToSave = { ...currentItem };
+          let hasError = false;
+
+          fields.forEach(field => {
+            if (field.type === 'textarea_array') {
+              itemToSave[field.name] = itemToSave[field.name].split('\n').filter(s => s.trim() !== '');
+            } else if (field.type === 'textarea_json') {
+                try {
+                    if (itemToSave[field.name] && String(itemToSave[field.name]).trim()) {
+                        itemToSave[field.name] = JSON.parse(itemToSave[field.name]);
+                    } else {
+                        itemToSave[field.name] = null;
+                    }
+                } catch (e) {
+                    alert(`Error: Invalid JSON in "${field.label}" field.\n\n${e.message}`);
+                    hasError = true;
+                }
+            }
+          });
+          
+          if (hasError) return;
+
+          onSave(itemToSave);
+          closeModal();
+        };
+
+        const handleChange = (e) => {
+          const { name, value, type } = e.target;
+          setCurrentItem(prev => ({ ...prev, [name]: type === 'number' ? parseFloat(value) || 0 : value }));
+        };
+        
+        return (
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">{title}</h2>
+              <div className="flex space-x-2">
+                 {isOrderChanged && (
+                    <button onClick={handleSaveOrder} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Save Order
+                    </button>
+                 )}
+                  <button onClick={() => openModal()} className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
+                    Add New
+                  </button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left text-gray-500">
+                <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                  <tr>
+                    <th scope="col" className="px-4 py-3 w-10"></th>
+                    {fields.map(f => !f.hidden && <th key={f.name} scope="col" className="px-6 py-3">{f.label}</th>)}
+                    <th scope="col" className="px-6 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {localItems.map((item, index) => (
+                    <tr 
+                        key={item.id} 
+                        className="bg-white border-b hover:bg-gray-50 transition-colors"
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, index)}
+                        onDragEnter={(e) => handleDragEnter(e, index)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => e.preventDefault()}
+                    >
+                        <td className="px-4 py-4">
+                            <div className="drag-handle" title="Drag to reorder">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                        </td>
+                        {fields.map(f => !f.hidden && (
+                            <td key={`${item.id}-${f.name}`} className="px-6 py-4">
+                                {f.name === 'image_url' && item[f.name] ? (
+                                    <img src={item[f.name]} alt="preview" className="w-16 h-16 object-cover rounded-md"/>
+                                ) : Array.isArray(item[f.name]) ? (
+                                    item[f.name].length + ' items'
+                                ) : typeof item[f.name] === 'object' && item[f.name] !== null ? (
+                                    <pre className="text-xs bg-gray-100 p-2 rounded-md font-mono max-w-xs overflow-auto">{JSON.stringify(item[f.name], null, 2)}</pre>
+                                ) : (
+                                    <span className="max-w-xs block truncate">{item[f.name]}</span>
+                                )}
+                            </td>
+                        ))}
+                      <td className="px-6 py-4 flex space-x-2">
+                        <button onClick={() => openModal(item)} className="font-medium text-blue-600 hover:underline">Edit</button>
+                        <button onClick={() => onDelete(item.id)} className="font-medium text-red-600 hover:underline">Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <AdminModal isOpen={isModalOpen} onClose={closeModal} title={currentItem?.id ? `Edit ${title.slice(0, -1)}` : `Add ${title.slice(0, -1)}`}>
+                <div className="space-y-4">
+                    {fields.map(field => (
+                        <div key={field.name}>
+                            <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+                            {field.type === 'textarea' || field.type === 'textarea_array' || field.type === 'textarea_json' ? (
+                                <textarea 
+                                  name={field.name} 
+                                  value={currentItem ? currentItem[field.name] || '' : ''} 
+                                  onChange={handleChange} 
+                                  className={`mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm ${field.type === 'textarea_json' ? 'font-mono' : ''}`} 
+                                  rows={field.type === 'textarea_json' ? 8 : 3}
+                                ></textarea>
+                            ) : (
+                                <input type={field.type || 'text'} name={field.name} value={currentItem ? currentItem[field.name] || '' : ''} onChange={handleChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm" />
+                            )}
+                        </div>
+                    ))}
+                    <div className="flex justify-end space-x-2 pt-4">
+                      <button onClick={closeModal} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancel</button>
+                      <button onClick={handleSave} className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700">Save</button>
+                    </div>
+                </div>
+            </AdminModal>
+          </div>
+        );
+      };
+      // --- END: admin/ContentManager.tsx ---
+
+      // --- START: admin/AdminDashboard.tsx ---
+      const AdminDashboard = ({ children, onLogout, activeView, setActiveView }) => {
+          const navItems = ['Dashboard', 'Canopies', 'Packages', 'Accessories', 'Bookings'];
+          
+          return (
+            <div className="min-h-screen bg-gray-100">
+                <header className="bg-white shadow-sm fixed top-0 left-0 right-0 z-40">
+                  <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="flex justify-between items-center h-16">
+                      <h1 className="text-2xl font-bold text-emerald-600">Admin Portal</h1>
+                      <button 
+                        onClick={onLogout}
+                        className="px-4 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
+                      >
+                        Logout
+                      </button>
+                    </div>
+                  </div>
+                </header>
+                <div className="flex pt-16">
+                    <aside className="w-64 bg-gray-800 text-white min-h-screen p-4 fixed">
+                        <nav>
+                            <ul>
+                                {navItems.map(item => (
+                                    <li key={item}>
+                                        <button 
+                                            onClick={() => setActiveView(item.toLowerCase())}
+                                            className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeView === item.toLowerCase() ? 'bg-emerald-600' : 'hover:bg-gray-700'}`}
+                                        >
+                                            {item}
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </nav>
+                    </aside>
+                    <main className="flex-1 ml-64 p-6">
+                        {children}
+                    </main>
+                </div>
+            </div>
+          );
+      };
+      
+      const DashboardHome = ({ canopies, packages, accessories }) => (
+        <div>
+            <h2 className="text-3xl font-bold text-gray-800 mb-6">Dashboard Overview</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-lg shadow transition hover:shadow-lg">
+                    <h3 className="text-lg font-semibold text-gray-700">Total Canopies</h3>
+                    <p className="text-4xl font-bold text-emerald-600 mt-2">{canopies.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow transition hover:shadow-lg">
+                    <h3 className="text-lg font-semibold text-gray-700">Total Packages</h3>
+                    <p className="text-4xl font-bold text-emerald-600 mt-2">{packages.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow transition hover:shadow-lg">
+                    <h3 className="text-lg font-semibold text-gray-700">Total Accessories</h3>
+                    <p className="text-4xl font-bold text-emerald-600 mt-2">{accessories.length}</p>
+                </div>
+            </div>
+        </div>
+      );
+
+      const BookingsPage = () => {
+         const [bookings, setBookings] = useState([]);
+         const [loading, setLoading] = useState(true);
+         const [viewBooking, setViewBooking] = useState(null);
+
+         useEffect(() => {
+             fetchBookings();
+         }, []);
+
+         const fetchBookings = async () => {
+             setLoading(true);
+             const { data, error } = await supabaseClient.from('bookings').select('*').order('created_at', { ascending: false });
+             if (error) {
+                 console.error('Error fetching bookings:', error);
+                 alert('Failed to load bookings');
+             } else {
+                 setBookings(data);
+             }
+             setLoading(false);
+         };
+
+         const handleStatusUpdate = async (id, newStatus) => {
+             const { error } = await supabaseClient.from('bookings').update({ status: newStatus }).eq('id', id);
+             if (error) {
+                 alert('Failed to update status');
+             } else {
+                 setBookings(prev => prev.map(b => b.id === id ? { ...b, status: newStatus } : b));
+             }
+         };
+
+         if (loading) return <div className="p-8 text-center text-gray-500">Loading bookings...</div>;
+
+         return (
+            <div className="bg-white p-8 rounded-lg shadow">
+               <div className="flex justify-between items-center mb-6">
+                   <h2 className="text-3xl font-bold text-gray-800">Booking Management</h2>
+                   <button onClick={fetchBookings} className="text-sm text-emerald-600 hover:text-emerald-800 font-medium">Refresh</button>
+               </div>
+               <div className="overflow-x-auto">
+                   <table className="w-full text-sm text-left text-gray-500">
+                       <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                           <tr>
+                               <th className="px-6 py-3">ID</th>
+                               <th className="px-6 py-3">Customer</th>
+                               <th className="px-6 py-3">Event Date</th>
+                               <th className="px-6 py-3">Total (RM)</th>
+                               <th className="px-6 py-3">Status</th>
+                               <th className="px-6 py-3">Actions</th>
+                           </tr>
+                       </thead>
+                       <tbody>
+                           {bookings.length === 0 ? (
+                               <tr><td colSpan="6" className="px-6 py-4 text-center">No bookings found.</td></tr>
+                           ) : (
+                               bookings.map(booking => (
+                                   <tr key={booking.id} className="bg-white border-b hover:bg-gray-50">
+                                       <td className="px-6 py-4 font-medium text-gray-900">#{booking.id}</td>
+                                       <td className="px-6 py-4">
+                                           <div className="font-medium text-gray-800">{booking.full_name}</div>
+                                           <div className="text-xs text-gray-500">{booking.phone}</div>
+                                       </td>
+                                       <td className="px-6 py-4">{booking.event_date}</td>
+                                       <td className="px-6 py-4 font-bold">RM {booking.total_price}</td>
+                                       <td className="px-6 py-4">
+                                           <select 
+                                               value={booking.status} 
+                                               onChange={(e) => handleStatusUpdate(booking.id, e.target.value)}
+                                               className={`text-xs font-semibold px-2 py-1 rounded-full border-0 cursor-pointer ${
+                                                   booking.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' : 
+                                                   booking.status === 'Confirmed' ? 'bg-blue-100 text-blue-800' :
+                                                   booking.status === 'Completed' ? 'bg-green-100 text-green-800' : 
+                                                   'bg-red-100 text-red-800'
+                                               }`}
+                                           >
+                                               <option value="Pending">Pending</option>
+                                               <option value="Confirmed">Confirmed</option>
+                                               <option value="Completed">Completed</option>
+                                               <option value="Cancelled">Cancelled</option>
+                                           </select>
+                                       </td>
+                                       <td className="px-6 py-4">
+                                           <button onClick={() => setViewBooking(booking)} className="font-medium text-emerald-600 hover:underline">View Details</button>
+                                       </td>
+                                   </tr>
+                               ))
+                           )}
+                       </tbody>
+                   </table>
+               </div>
+
+               <AdminModal isOpen={!!viewBooking} onClose={() => setViewBooking(null)} title={`Booking #${viewBooking?.id} Details`}>
+                   {viewBooking && (
+                       <div className="space-y-4">
+                           <div className="grid grid-cols-2 gap-4 text-sm">
+                               <div><span className="font-bold">Name:</span> {viewBooking.full_name}</div>
+                               <div><span className="font-bold">Email:</span> {viewBooking.email}</div>
+                               <div><span className="font-bold">Phone:</span> {viewBooking.phone}</div>
+                               <div><span className="font-bold">Location:</span> {viewBooking.location}</div>
+                               <div><span className="font-bold">Event Date:</span> {viewBooking.event_date}</div>
+                               <div><span className="font-bold">Time:</span> {viewBooking.event_time}</div>
+                               <div><span className="font-bold">Guests:</span> {viewBooking.guest_count}</div>
+                               <div><span className="font-bold">Mode:</span> {viewBooking.booking_mode}</div>
+                           </div>
+                           
+                           {viewBooking.special_requests && (
+                               <div className="bg-yellow-50 p-3 rounded-md text-sm border border-yellow-200">
+                                   <span className="font-bold text-yellow-800">Special Requests:</span>
+                                   <p className="mt-1 text-gray-700">{viewBooking.special_requests}</p>
+                               </div>
+                           )}
+
+                           <div className="border-t pt-4">
+                               <h4 className="font-bold text-gray-800 mb-2">Ordered Items</h4>
+                               <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2 max-h-60 overflow-y-auto">
+                                   {(() => {
+                                       const items = viewBooking.selected_items;
+                                       if (!items) return <p>No items found.</p>;
+                                       const els = [];
+                                       if (items.canopies) {
+                                            Object.entries(items.canopies).forEach(([key, qty]) => {
+                                                if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Canopy ({key})</span><span>x{qty}</span></div>);
+                                            });
+                                       }
+                                       if (items.package) {
+                                           els.push(<div key="pkg" className="font-semibold text-emerald-700">Package: {items.package.name}</div>);
+                                       }
+                                       if (items.accessories) {
+                                           Object.entries(items.accessories).forEach(([key, qty]) => {
+                                                if(qty > 0) els.push(<div key={key} className="flex justify-between"><span>Accessory ID #{key}</span><span>x{qty}</span></div>);
+                                           });
+                                       }
+                                       return els;
+                                   })()}
+                               </div>
+                           </div>
+
+                           <div className="flex justify-between items-center pt-4 border-t font-bold text-lg">
+                               <span>Total Price:</span>
+                               <span>RM {viewBooking.total_price}</span>
+                           </div>
+                       </div>
+                   )}
+               </AdminModal>
+            </div>
+         );
+      };
+      // --- END: admin/AdminDashboard.tsx ---
+
+      // --- START: App.tsx ---
+      const App = () => {
+          const [view, setView] = useState('home');
+          const [adminView, setAdminView] = useState('dashboard');
+          const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+          
+          const [isLoading, setIsLoading] = useState(true);
+          const [error, setError] = useState(null);
+
+          const [canopiesData, setCanopiesData] = useState([]);
+          const [packagesData, setPackagesData] = useState([]);
+          const [colorsData, setColorsData] = useState(initialColors); // Colors can remain static
+          const [accessoriesData, setAccessoriesData] = useState([]);
+          
+          const [currentStep, setCurrentStep] = useState(1);
+          const [bookingMode, setBookingMode] = useState(BookingMode.AlaCarte);
+          
+          const [selectedCanopies, setSelectedCanopies] = useState({});
+          const [selectedPackage, setSelectedPackage] = useState(null);
+          const [selectedColor, setSelectedColor] = useState(colorsData[0]);
+          const [selectedAccessories, setSelectedAccessories] = useState({});
+          const [bookingDetails, setBookingDetails] = useState({
+              fullName: '', email: '', phone: '', eventDate: '', eventTime: '',
+              guestCount: '', location: '', specialRequests: ''
+          });
+
+          // Fetch data from Supabase on initial load
+          useEffect(() => {
+              const fetchData = async () => {
+                  setIsLoading(true);
+                  setError(null);
+                  try {
+                      // Attempt to sort by sort_order
+                      const [canopiesRes, packagesRes, accessoriesRes] = await Promise.all([
+                          supabaseClient.from('canopies').select('*').order('sort_order', { ascending: true }),
+                          supabaseClient.from('packages').select('*').order('sort_order', { ascending: true }),
+                          supabaseClient.from('accessories').select('*').order('sort_order', { ascending: true })
+                      ]);
+
+                      if (canopiesRes.error) throw canopiesRes.error;
+                      if (packagesRes.error) throw packagesRes.error;
+                      if (accessoriesRes.error) throw accessoriesRes.error;
+
+                      setCanopiesData(canopiesRes.data || []);
+                      setPackagesData(packagesRes.data || []);
+                      setAccessoriesData(accessoriesRes.data || []);
+                  } catch (err) {
+                      console.error("Error fetching data from Supabase:", err);
+                      // Fallback logic in case sort_order column doesn't exist yet, to prevent app crash
+                      if (err.message.includes('sort_order')) {
+                        console.warn("Attempting fallback fetch without sort_order.");
+                         try {
+                              const [canopiesRes, packagesRes, accessoriesRes] = await Promise.all([
+                                  supabaseClient.from('canopies').select('*'),
+                                  supabaseClient.from('packages').select('*'),
+                                  supabaseClient.from('accessories').select('*')
+                              ]);
+                              setCanopiesData(canopiesRes.data || []);
+                              setPackagesData(packagesRes.data || []);
+                              setAccessoriesData(accessoriesRes.data || []);
+                         } catch (fallbackErr) {
+                              setError(`Failed to load data: ${fallbackErr.message}.`);
+                         }
+                      } else {
+                          setError(`Failed to load data: ${err.message}. Please ensure your Supabase tables (canopies, packages, accessories) are set up correctly and reload the page.`);
+                      }
+                  } finally {
+                      setIsLoading(false);
+                  }
+              };
+              fetchData();
+          }, []);
+
+
+          // CRUD Handlers
+          const handleSaveCanopy = async (canopy) => {
+              const { id, ...canopyToSave } = canopy;
+          
+              if (id) { // Update
+                  const { data, error } = await supabaseClient.from('canopies').update(canopyToSave).eq('id', id).select().single();
+                  if (error) { alert(`Error updating canopy: ${error.message}`); }
+                  else { setCanopiesData(prev => prev.map(c => c.id === data.id ? data : c)); }
+              } else { // Create
+                  const { data, error } = await supabaseClient.from('canopies').insert(canopyToSave).select().single();
+                  if (error) { alert(`Error creating canopy: ${error.message}`); }
+                  else { setCanopiesData(prev => [...prev, data]); }
+              }
+          };
+          const handleDeleteCanopy = async (id) => {
+            if (!confirm("Are you sure you want to delete this canopy?")) return;
+            const { error } = await supabaseClient.from('canopies').delete().eq('id', id);
+            if (error) { alert(`Error deleting canopy: ${error.message}`); }
+            else { setCanopiesData(prev => prev.filter(c => c.id !== id)); }
+          };
+
+          const handleSavePackage = async (pkg) => {
+            const { id, ...pkgToSave } = pkg;
+
+            if (id) { // Update
+                const { data, error } = await supabaseClient.from('packages').update(pkgToSave).eq('id', id).select().single();
+                if (error) { alert(`Error updating package: ${error.message}`); }
+                else { setPackagesData(prev => prev.map(p => p.id === data.id ? data : p)); }
+            } else { // Create
+                const { data, error } = await supabaseClient.from('packages').insert(pkgToSave).select().single();
+                if (error) { alert(`Error creating package: ${error.message}`); }
+                else { setPackagesData(prev => [...prev, data]); }
+            }
+          };
+          const handleDeletePackage = async (id) => {
+            if (!confirm("Are you sure you want to delete this package?")) return;
+            const { error } = await supabaseClient.from('packages').delete().eq('id', id);
+            if (error) { alert(`Error deleting package: ${error.message}`); }
+            else { setPackagesData(prev => prev.filter(p => p.id !== id)); }
+          };
+          
+          const handleSaveAccessory = async (accessory) => {
+            const { id, ...accToSave } = accessory;
+             
+            if (id) { // Update
+                const { data, error } = await supabaseClient.from('accessories').update(accToSave).eq('id', id).select().single();
+                if (error) { alert(`Error updating accessory: ${error.message}`); }
+                else { setAccessoriesData(prev => prev.map(a => a.id === data.id ? data : a)); }
+            } else { // Create
+                const { data, error } = await supabaseClient.from('accessories').insert(accToSave).select().single();
+                if (error) { alert(`Error creating accessory: ${error.message}`); }
+                else { setAccessoriesData(prev => [...prev, data]); }
+            }
+          };
+          const handleDeleteAccessory = async (id) => {
+            if (!confirm("Are you sure you want to delete this accessory?")) return;
+            const { error } = await supabaseClient.from('accessories').delete().eq('id', id);
+            if (error) { alert(`Error deleting accessory: ${error.message}`); }
+            else { setAccessoriesData(prev => prev.filter(a => a.id !== id)); }
+          };
+          
+          // --- Reorder Handler ---
+          const handleReorder = async (tableName, newItems, setLocalState) => {
+              // Optimistic UI update
+              setLocalState(newItems);
+
+              // Update: We must send the FULL object to upsert to avoid overwriting other columns with null/defaults
+              // if the backend treats it as a full row replacement.
+              const updates = newItems.map((item, index) => ({
+                  ...item, // Spread existing properties (name, price, etc.)
+                  sort_order: index
+              }));
+
+              try {
+                  // select() is good practice to get the returned data back
+                  const { error } = await supabaseClient.from(tableName).upsert(updates); 
+                  if (error) throw error;
+              } catch (err) {
+                  console.error(`Error saving order for ${tableName}:`, err);
+                  alert(`Failed to save new order. Please ensure the 'sort_order' column exists in your database table '${tableName}'.`);
+                  // In a real app, we might revert local state here
+              }
+          };
+
+
+          const stepsAlaCarte = ['Canopy', 'Color', 'Accessories', 'Details'];
+          const stepsPackage = ['Package', 'Color', 'Accessories', 'Details'];
+          const activeSteps = bookingMode === BookingMode.Package ? stepsPackage : stepsAlaCarte;
+          const totalSteps = activeSteps.length;
+
+          const resetState = useCallback(() => {
+              setCurrentStep(1);
+              setBookingMode(BookingMode.AlaCarte);
+              setSelectedCanopies({});
+              setSelectedPackage(null);
+              setSelectedColor(colorsData[0]);
+              setSelectedAccessories({});
+              setBookingDetails({
+                  fullName: '', email: '', phone: '', eventDate: '', eventTime: '',
+                  guestCount: '', location: '', specialRequests: ''
+              });
+          }, [colorsData]);
+          
+          const navigateToHome = () => { setView('home'); resetState(); };
+          const navigateToBooking = () => setView('booking');
+          const navigateToAbout = () => setView('about');
+          const navigateToContact = () => setView('contact');
+          const navigateToLogin = () => setView('login');
+
+          const handleLogin = (username, password) => {
+              if (username === 'admin' && password === 'password') {
+                  setIsAdminLoggedIn(true);
+                  setAdminView('dashboard');
+                  return true;
+              }
+              return false;
+          };
+
+          const handleLogout = () => {
+              setIsAdminLoggedIn(false);
+              navigateToHome();
+          };
+
+          const handleNext = useCallback(() => setCurrentStep(prev => Math.min(prev + 1, totalSteps)), [totalSteps]);
+          const handleBack = useCallback(() => {
+              if (bookingMode === BookingMode.Package && currentStep === 2) {
+                  setCurrentStep(1);
+              } else {
+                  setCurrentStep(prev => Math.max(prev - 1, 1));
+              }
+          }, [bookingMode, currentStep]);
+
+          const handleCanopyQuantityChange = (compositeId, newQuantity) => {
+              setSelectedCanopies(prev => ({
+                  ...prev,
+                  [compositeId]: newQuantity >= 0 ? newQuantity : 0,
+              }));
+          };
+          
+          const handleAccessoryQuantityChange = (id, newQuantity) => {
+              setSelectedAccessories(prev => ({
+                  ...prev,
+                  [id]: newQuantity >= 0 ? newQuantity : 0,
+              }));
+          };
+
+          const handleSingleCanopySelect = (canopy, size) => {
+              let compositeId;
+              if (canopy.sizes && size) {
+                  compositeId = `${canopy.id}_${size.name}`;
+              } else if (canopy.sizes && Array.isArray(canopy.sizes) && canopy.sizes.length > 0) {
+                  compositeId = `${canopy.id}_${canopy.sizes[0].name}`;
+              } else {
+                  compositeId = canopy.id;
+              }
+              setSelectedCanopies({ [compositeId]: 1 });
+              handleNext();
+          };
+          
+          const handlePackageSelect = (pkg) => {
+                setSelectedPackage(pkg);
+
+                // Auto-select canopy based on package description to ensure color selection and summary works
+                let canopySet = false;
+                const canopyItemString = pkg.items.find(item => item.toLowerCase().includes('canopy'));
+                
+                if (canopyItemString && canopiesData.length > 0) {
+                    const matchingCanopy = canopiesData.find(c => canopyItemString.toLowerCase().includes(c.name.toLowerCase()));
+
+                    if (matchingCanopy) {
+                        let compositeId = matchingCanopy.id;
+                        if (Array.isArray(matchingCanopy.sizes) && matchingCanopy.sizes.length > 0) {
+                            const sizeMatch = canopyItemString.match(/\((.*?)\)/);
+                            let sizeName = matchingCanopy.sizes[0].name; // Default to first size
+                            if (sizeMatch) {
+                                const foundSize = matchingCanopy.sizes.find(s => s.name === sizeMatch[1]);
+                                if (foundSize) sizeName = foundSize.name;
+                            }
+                            compositeId = `${matchingCanopy.id}_${sizeName}`;
+                        }
+                        setSelectedCanopies({ [compositeId]: 1 });
+                        canopySet = true;
+                    }
+                }
+                
+                if (!canopySet && canopiesData.length > 0) {
+                    const defaultCanopy = canopiesData[0];
+                    let compositeId = defaultCanopy.id;
+                    if (Array.isArray(defaultCanopy.sizes) && defaultCanopy.sizes.length > 0) {
+                        compositeId = `${defaultCanopy.id}_${defaultCanopy.sizes[0].name}`;
+                    }
+                    setSelectedCanopies({ [compositeId]: 1 });
+                }
+                
+                handleNext();
+            };
+
+          const handleColorSelect = (color) => { setSelectedColor(color); handleNext(); };
+
+          const handleBookingModeChange = (mode) => {
+              setBookingMode(mode);
+              setSelectedCanopies({});
+              setSelectedPackage(null);
+              setSelectedAccessories({});
+              setCurrentStep(1); 
+          };
+          
+          const financials = useMemo(() => {
+              let subtotal = 0;
+
+              if (bookingMode === BookingMode.AlaCarte) {
+                  Object.entries(selectedCanopies).forEach(([compositeId, quantity]) => {
+                      if (quantity > 0) {
+                          const idParts = compositeId.split('_');
+                          const canopyId = idParts[0];
+                          const sizeName = idParts.length > 1 ? idParts[1] : null;
+
+                          const canopy = canopiesData.find(c => c.id == canopyId);
+                          if (!canopy) return;
+
+                          let price;
+                          if (sizeName && Array.isArray(canopy.sizes)) {
+                              const size = canopy.sizes.find(s => s.name === sizeName);
+                              price = size ? size.price : 0;
+                          } else {
+                              price = canopy.price;
+                          }
+                          subtotal += price * Number(quantity);
+                      }
+                  });
+              }
+              
+              if (bookingMode === BookingMode.Package && selectedPackage) {
+                  subtotal += selectedPackage.price;
+              }
+
+              Object.entries(selectedAccessories).forEach(([id, quantity]) => {
+                  const accessory = accessoriesData.find(a => a.id == id);
+                  if (accessory) subtotal += accessory.price * Number(quantity);
+              });
+              
+              const sst = subtotal * 0.06;
+              const deliveryFee = 100;
+              const grandTotal = subtotal + sst + deliveryFee;
+              const deposit = grandTotal * 0.5;
+
+              return { subtotal, sst, deliveryFee, grandTotal, deposit };
+          }, [selectedCanopies, selectedPackage, selectedAccessories, bookingMode, canopiesData, accessoriesData]);
+
+
           const handleCompleteBooking = async () => {
               const hasCanopySelection = Object.values(selectedCanopies).some(q => q > 0);
               if (!hasCanopySelection) {
@@ -50,7 +1887,6 @@
               }
 
               // --- 2. Construct WhatsApp Message ---
-              // Gunakan format standard
               let msg = `Salam BMC Canopy, saya ingin membuat tempahan (${bookingId}).\n\n`;
               
               msg += `*MAKLUMAT PELANGGAN*\n`;
@@ -120,3 +1956,253 @@
 
               navigateToHome();
           };
+
+          const renderStep = () => {
+              if (bookingMode === BookingMode.AlaCarte) {
+                  switch(currentStep) {
+                      case 1: return <Step1Canopy canopies={canopiesData} bookingMode={bookingMode} onModeChange={handleBookingModeChange} selectedCanopies={selectedCanopies} onQuantityChange={handleCanopyQuantityChange} />;
+                      case 2: return <Step3Color colors={colorsData} onSelect={handleColorSelect} selectedColor={selectedColor} />;
+                      case 3: return <Step4Accessories accessories={accessoriesData} selectedAccessories={selectedAccessories} onQuantityChange={handleAccessoryQuantityChange} />;
+                      case 4: return <Step5Details details={bookingDetails} setDetails={setBookingDetails} />;
+                      default: return null;
+                  }
+              } else {
+                  switch(currentStep) {
+                      case 1: return <Step2Package packages={packagesData} onSelect={handlePackageSelect} />;
+                      case 2: return <Step3Color colors={colorsData} onSelect={handleColorSelect} selectedColor={selectedColor} />;
+                      case 3: return <Step4Accessories accessories={accessoriesData} selectedAccessories={selectedAccessories} onQuantityChange={handleAccessoryQuantityChange} />;
+                      case 4: return <Step5Details details={bookingDetails} setDetails={setBookingDetails} />;
+                      default: return null;
+                  }
+              }
+          };
+          
+          const isFinalStep = currentStep === totalSteps;
+          const hasSelection = bookingMode === BookingMode.AlaCarte 
+              ? Object.values(selectedCanopies).some(q => q > 0)
+              : !!selectedPackage;
+
+          const renderBookingWizard = () => {
+              // Initial screen for choosing booking mode
+              if (currentStep === 1 && bookingMode === BookingMode.Package && !selectedPackage) {
+                  return (
+                       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+                           <div className="bg-white rounded-2xl shadow-lg p-6 md:p-10">
+                                <h2 className="text-3xl font-bold text-center text-gray-800">Choose Your Booking Type</h2>
+                                <div className="flex justify-center my-8">
+                                    <div className="relative flex w-full max-w-xs p-1 bg-gray-200 rounded-full">
+                                        <span
+                                            className="absolute top-0 left-0 w-1/2 h-full p-1 transition-transform duration-300 ease-in-out"
+                                            style={{ transform: bookingMode === BookingMode.AlaCarte ? 'translateX(0%)' : 'translateX(98%)' }}
+                                        >
+                                            <span className="block w-full h-full bg-white rounded-full shadow-md"></span>
+                                        </span>
+                                        <button 
+                                            onClick={() => handleBookingModeChange(BookingMode.AlaCarte)} 
+                                            className="relative z-10 w-1/2 py-2 text-sm font-semibold text-center transition-colors duration-300"
+                                        >
+                                            Ala Carte
+                                        </button>
+                                        <button 
+                                            onClick={() => handleBookingModeChange(BookingMode.Package)} 
+                                            className="relative z-10 w-1/2 py-2 text-sm font-semibold text-center transition-colors duration-300"
+                                        >
+                                            Package
+                                        </button>
+                                    </div>
+                                </div>
+                                {bookingMode === BookingMode.AlaCarte ? <Step1Canopy canopies={canopiesData} bookingMode={bookingMode} onModeChange={handleBookingModeChange} selectedCanopies={selectedCanopies} onQuantityChange={handleCanopyQuantityChange} onSingleCanopySelect={handleSingleCanopySelect} /> : <Step2Package packages={packagesData} onSelect={handlePackageSelect} />}
+                           </div>
+                       </main>
+                  )
+              }
+
+              return (
+              <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+                  <div className="bg-white rounded-2xl shadow-lg p-6 md:p-10">
+                      <ProgressBar steps={activeSteps} currentStep={currentStep} />
+                      <div className={`mt-10 ${isFinalStep ? 'grid lg:grid-cols-3 gap-12' : ''}`}>
+                          <div className={isFinalStep ? 'lg:col-span-2' : ''}>
+                            {renderStep()}
+                          </div>
+                          {isFinalStep && (
+                              <div className="lg:col-span-1">
+                                  <OrderSummary 
+                                    canopies={canopiesData} 
+                                    accessories={accessoriesData} 
+                                    selectedCanopies={selectedCanopies} 
+                                    selectedPackage={selectedPackage} 
+                                    selectedColor={selectedColor} 
+                                    selectedAccessories={selectedAccessories} 
+                                    subtotal={financials.subtotal}
+                                    sst={financials.sst}
+                                    deliveryFee={financials.deliveryFee}
+                                    grandTotal={financials.grandTotal}
+                                    deposit={financials.deposit}
+                                    bookingMode={bookingMode} 
+                                  />
+                              </div>
+                          )}
+                      </div>
+
+                      {!isFinalStep && hasSelection && (
+                          <SelectionSummary 
+                              bookingMode={bookingMode}
+                              selectedCanopies={selectedCanopies}
+                              canopies={canopiesData}
+                              selectedPackage={selectedPackage}
+                              onCanopyQuantityChange={handleCanopyQuantityChange}
+                              selectedAccessories={selectedAccessories}
+                              accessories={accessoriesData}
+                              onAccessoryQuantityChange={handleAccessoryQuantityChange}
+                          />
+                      )}
+
+                      {hasSelection && (
+                          <div className="mt-12 flex justify-between items-start">
+                              <button onClick={handleBack} disabled={currentStep === 1} className="px-6 py-2 text-emerald-600 font-semibold rounded-lg hover:bg-emerald-50 transition-colors disabled:text-gray-400 disabled:bg-transparent disabled:cursor-not-allowed">Back</button>
+                              
+                              {!isFinalStep ? (
+                                <button onClick={handleNext} className="px-6 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 transition-colors">Next</button>
+                              ) : (
+                                <div className="text-right">
+                                    <button onClick={handleCompleteBooking} className="px-8 py-3 bg-emerald-600 text-white font-bold text-lg rounded-lg hover:bg-emerald-700 transition-all shadow-md hover:shadow-lg">
+                                        Complete Booking
+                                    </button>
+                                    <p className="text-xs text-gray-500 mt-2 max-w-xs ml-auto">
+                                        Clicking this will save your booking and redirect you to WhatsApp to confirm your order details.
+                                    </p>
+                                </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+              </main>
+            )
+          };
+          
+          if (isLoading) {
+              return (
+                  <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                      <div className="text-center">
+                          <svg className="mx-auto h-12 w-12 text-emerald-500 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <h2 className="mt-4 text-xl font-semibold text-gray-700">Loading Data...</h2>
+                      </div>
+                  </div>
+              );
+          }
+
+          if (error) {
+              return (
+                  <div className="min-h-screen flex items-center justify-center bg-red-50">
+                      <div className="text-center p-8 bg-white rounded-lg shadow-lg">
+                          <h2 className="text-2xl font-bold text-red-600">An Error Occurred</h2>
+                          <p className="mt-2 text-gray-600">{error}</p>
+                      </div>
+                  </div>
+              );
+          }
+
+          if (isAdminLoggedIn) {
+              const renderAdminContent = () => {
+                  switch (adminView) {
+                      case 'canopies':
+                          return <ContentManager 
+                                    title="Canopies"
+                                    items={canopiesData}
+                                    fields={[
+                                      { name: 'image_url', label: 'Image URL' },
+                                      { name: 'name', label: 'Name' },
+                                      { name: 'description', label: 'Description', type: 'textarea' },
+                                      { name: 'price', label: 'Base Price (non-sized)', type: 'number' },
+                                      { name: 'sizes', label: 'Sizes (JSON format)', type: 'textarea_json' }
+                                    ]}
+                                    onSave={handleSaveCanopy}
+                                    onDelete={handleDeleteCanopy}
+                                    onReorderSave={(newItems) => handleReorder('canopies', newItems, setCanopiesData)}
+                                  />;
+                      case 'packages':
+                          return <ContentManager
+                                    title="Packages"
+                                    items={packagesData}
+                                    fields={[
+                                      { name: 'name', label: 'Name' },
+                                      { name: 'price', label: 'Price', type: 'number' },
+                                      { name: 'description', label: 'Description', type: 'textarea' },
+                                      { name: 'items', label: 'Items (one per line)', type: 'textarea_array' }
+                                    ]}
+                                    onSave={handleSavePackage}
+                                    onDelete={handleDeletePackage}
+                                    onReorderSave={(newItems) => handleReorder('packages', newItems, setPackagesData)}
+                                  />;
+                      case 'accessories':
+                          return <ContentManager
+                                    title="Accessories"
+                                    items={accessoriesData}
+                                    fields={[
+                                      { name: 'image_url', label: 'Image URL' },
+                                      { name: 'name', label: 'Name' },
+                                      { name: 'price', label: 'Price', type: 'number' },
+                                      { name: 'category', label: 'Category' }
+                                    ]}
+                                    onSave={handleSaveAccessory}
+                                    onDelete={handleDeleteAccessory}
+                                    onReorderSave={(newItems) => handleReorder('accessories', newItems, setAccessoriesData)}
+                                  />;
+                      case 'bookings':
+                          return <BookingsPage />;
+                      case 'dashboard':
+                      default:
+                          return <DashboardHome canopies={canopiesData} packages={packagesData} accessories={accessoriesData} />;
+                  }
+              };
+
+            return (
+                <AdminDashboard onLogout={handleLogout} activeView={adminView} setActiveView={setAdminView}>
+                    {renderAdminContent()}
+                </AdminDashboard>
+            );
+          }
+
+          if (view === 'login') {
+              return <LoginPage onLogin={handleLogin} />;
+          }
+
+          const renderContent = () => {
+              switch (view) {
+                  case 'home': return <HomePage onBookNowClick={navigateToBooking} />;
+                  case 'booking': return renderBookingWizard();
+                  case 'about': return <AboutPage onBookNowClick={navigateToBooking} />;
+                  case 'contact': return <ContactPage />;
+                  default: return <HomePage onBookNowClick={navigateToBooking} />;
+              }
+          }
+
+          return (
+              <div className="min-h-screen bg-gray-100 text-gray-800 flex flex-col">
+                  <Header activeView={view} onNavigateHome={navigateToHome} onNavigateToBooking={navigateToBooking} onNavigateToAbout={navigateToAbout} onNavigateToContact={navigateToContact} />
+                  <div className="flex-grow">{renderContent()}</div>
+                  <Footer onNavigateHome={navigateToHome} onNavigateToBooking={navigateToBooking} onNavigateToAbout={navigateToAbout} onNavigateToContact={navigateToContact} onNavigateToLogin={navigateToLogin} />
+              </div>
+          );
+      };
+      // --- END: App.tsx ---
+
+      // --- START: index.tsx ---
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>
+      );
+      // --- END: index.tsx ---
+    </script>
+  </body>
+</html>
