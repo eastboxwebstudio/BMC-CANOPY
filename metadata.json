@@ -1,5 +1,5 @@
 {
-  "name": "Copy of BMC Canopy Booking",
+  "name": "BMC Canopy Booking",
   "description": "A multi-step booking wizard for BMC Canopy rentals, allowing users to choose between 'Ala Carte' custom selections or pre-defined 'Bundled Packages'. The application features a dynamic progress bar, accessory add-ons, and a final order summary.",
   "requestFramePermissions": []
 }
