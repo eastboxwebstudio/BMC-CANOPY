@@ -1,4 +1,5 @@
 import React from 'react';
+import heroImage from '../assets/hero.webp';
 
 interface FeatureProps {
   icon: React.ReactNode;
@@ -27,9 +28,8 @@ const HomePage: React.FC<HomePageProps> = ({ onBookNowClick }) => {
         <div className="absolute inset-0">
           <img
             className="w-full h-full object-cover"
-            src="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?ixlib=rb-4.0.3&auto=format&fit=crop&w=1920&q=80"
+            src={heroImage}
             alt="Elegant event setup under a canopy"
-            referrerPolicy="no-referrer"
           />
           <div className="absolute inset-0 bg-gray-900 bg-opacity-60" aria-hidden="true"></div>
         </div>
