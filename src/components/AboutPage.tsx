@@ -1,5 +1,4 @@
 import React from 'react';
-import storyImage from '../assets/story.jpg';
 
 interface AboutPageProps {
   onBookNowClick: () => void;
@@ -33,8 +32,9 @@ const AboutPage: React.FC<AboutPageProps> = ({ onBookNowClick }) => {
             <div className="rounded-lg overflow-hidden shadow-lg">
               <img
                 className="w-full h-full object-cover"
-                src={storyImage}
+                src="https://eastbox.com.my/wp-content/uploads/2026/03/3e78b5_be180e083bc544468174df896f32a2edmv2.jpg"
                 alt="Team setting up a canopy"
+                referrerPolicy="no-referrer"
               />
             </div>
           </div>
